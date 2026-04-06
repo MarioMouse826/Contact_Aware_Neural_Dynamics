@@ -2,7 +2,7 @@ import mujoco
 import mujoco.viewer
 import time
 
-# 1. Define the 'World' (This was missing in your script!)
+# 1. Define the 'World' 
 xml = """
 <mujoco>
     <worldbody>

@@ -2,6 +2,7 @@ import mujoco
 import mujoco.viewer
 import time
 
+#This script pops up the MuJoCo 3D simulator environment. On Mac (VS Code - Terminal), run "mjpython test_hand.py" after saving this script
 # 1. Define the 'World' 
 xml = """
 <mujoco>

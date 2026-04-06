@@ -4,6 +4,8 @@ import argparse
 import time
 from pathlib import Path
 
+from utils import load_wandb_config, resolve_device
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MODEL_PATH = "sac_humanoid_lifter"
@@ -25,6 +27,9 @@ def resolve_repo_path(path_str: str) -> Path:
 
 def main() -> None:
     args = parse_args()
+    wandb_config = load_wandb_config()
+    requested_device = wandb_config["device"]
+    resolved_device = resolve_device(requested_device)
 
     try:
         import mujoco
@@ -42,7 +47,8 @@ def main() -> None:
     env = HumanoidLifterEnv()
 
     print(f"Loading model from {model_path}...")
-    model = SAC.load(str(model_path))
+    print(f"Using device: {resolved_device} (requested: {requested_device})")
+    model = SAC.load(str(model_path), device=resolved_device)
 
     obs, _ = env.reset()
 

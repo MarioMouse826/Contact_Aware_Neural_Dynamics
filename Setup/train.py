@@ -3,7 +3,7 @@ from stable_baselines3 import SAC
 from stable_baselines3.common.monitor import Monitor
 
 from humanoid_env import HumanoidLifterEnv
-from utils import load_wandb_config
+from utils import load_wandb_config, resolve_device
 
 
 TRAINING_CONFIG = {
@@ -23,6 +23,8 @@ TRAINING_CONFIG = {
 
 def main():
     wandb_config = load_wandb_config()
+    requested_device = wandb_config["device"]
+    resolved_device = resolve_device(requested_device)
 
     print("Logging into Weights & Biases...")
     wandb.login()
@@ -30,11 +32,16 @@ def main():
     run = wandb.init(
         entity=wandb_config["entity"],
         project=wandb_config["project"],
-        config=TRAINING_CONFIG,
+        config={
+            **TRAINING_CONFIG,
+            "requested_device": requested_device,
+            "resolved_device": resolved_device,
+        },
         sync_tensorboard=True,
         save_code=True,
     )
 
+    print(f"Using device: {resolved_device} (requested: {requested_device})")
     print("Initializing environment...")
     env = Monitor(HumanoidLifterEnv())
     try:
@@ -50,6 +57,7 @@ def main():
             tau=TRAINING_CONFIG["tau"],
             train_freq=TRAINING_CONFIG["train_freq"],
             gradient_steps=TRAINING_CONFIG["gradient_steps"],
+            device=resolved_device,
             verbose=1,
             tensorboard_log="runs",
         )

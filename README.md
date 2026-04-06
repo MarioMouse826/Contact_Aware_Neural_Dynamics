@@ -42,7 +42,16 @@ Edit `Setup/wandb_config.yaml` with your W&B workspace info:
 ```yaml
 entity: contact-aware-rl
 project: my-awesome-project
+device: auto
 ```
+
+The `device` setting controls where PyTorch and Stable-Baselines3 run:
+
+- `auto`: prefer `cuda`, then `mps`, then `cpu`
+- `cuda`: require an NVIDIA GPU
+- `mps`: require Apple Silicon MPS
+- `cpu`: force CPU only
+- `gpu`: accepted as an alias for `cuda`
 
 Then install dependencies and run training:
 
@@ -51,7 +60,9 @@ uv sync
 uv run python Setup/train.py
 ```
 
-`Setup/train.py` will call `wandb.login()` automatically and start a run in the configured project. It also writes Stable-Baselines3 TensorBoard logs and lets W&B sync them automatically. You do not need to use the TensorBoard UI, but the `tensorboard` Python package should be installed. The training hyperparameters live near the top of `Setup/train.py`, so if you want to compare runs you can just change those values and run the script again.
+`Setup/train.py` will call `wandb.login()` automatically and start a run in the configured project. It also writes Stable-Baselines3 TensorBoard logs and lets W&B sync them automatically. You do not need to use the TensorBoard UI, but the `tensorboard` Python package should be installed. Device selection is read from `Setup/wandb_config.yaml`, and the requested/resolved device is logged to W&B for each run. The training hyperparameters live near the top of `Setup/train.py`, so if you want to compare runs you can just change those values and run the script again.
+
+If you set `device` to `cuda` or `mps`, that backend must actually be available in your local PyTorch install. If not, the script will fail with a clear error. Only `device: auto` falls back automatically.
 
 ## First-Time Setup
 
@@ -60,8 +71,9 @@ If you have never used W&B before:
 1. Create an account at `wandb.ai`.
 2. Ask for the correct team or workspace name if you are logging to a shared class/team account.
 3. Put the correct `entity` and `project` in `Setup/wandb_config.yaml`.
-4. Run `uv sync` and then `uv run python Setup/train.py`.
-5. The first time, W&B may ask you to paste an API key. After that, it is usually saved on your machine.
+4. Pick a device in `Setup/wandb_config.yaml`. In most cases, use `device: auto`.
+5. Run `uv sync` and then `uv run python Setup/train.py`.
+6. The first time, W&B may ask you to paste an API key. After that, it is usually saved on your machine.
 
 After training starts, you should see a link in the terminal to the W&B run page.
 
@@ -70,3 +82,5 @@ After training starts, you should see a link in the terminal to the W&B run page
 ```bash
 uv run python Setup/watch_ai.py --model-path sac_humanoid_lifter
 ```
+
+`Setup/watch_ai.py` uses the same `device` setting as training when loading the saved model.

@@ -1,2 +1,3 @@
 entity: contact-aware-rl
 project: contact-aware-neural-dynamics
+device: auto

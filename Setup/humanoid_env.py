@@ -123,7 +123,7 @@ class HumanoidLifterEnv(gym.Env):
 
     def _get_obs(self):
         """
-        This is the core of your proposal! Here we extract the state.
+        Extract the state as follows
         s_t = [q, q_dot, x_obj, R_obj, x_k, delta_x] + [c_t]
         """
         # q: joint positions, q_dot: joint velocities
@@ -133,7 +133,7 @@ class HumanoidLifterEnv(gym.Env):
         # x_obj: box position
         obj_pos = self.data.body("cube").xpos
         
-        # c_t: The Binary Contact Signal! (Your research focus)
+        # c_t: The Binary Contact Signal! 
         # Are the hands touching the box?
         left_contact = 0.0
         right_contact = 0.0

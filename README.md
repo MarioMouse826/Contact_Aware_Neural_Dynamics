@@ -41,7 +41,7 @@ Edit `Setup/wandb_config.yaml` with your W&B workspace info:
 
 ```yaml
 entity: contact-aware-rl
-project: my-awesome-project
+project: contact-aware-neural-dynamics
 device: auto
 ```
 

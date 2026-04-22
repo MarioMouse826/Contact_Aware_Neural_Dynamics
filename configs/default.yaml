@@ -1,0 +1,57 @@
+env:
+  max_episode_steps: 200
+  substeps: 10
+  action_scale_xyz: 0.015
+  action_scale_grip: 0.01
+  table_height: 0.05
+  success_height_over_table: 0.08
+  success_hold_steps: 10
+  termination_drop_margin: 0.03
+  reset_object_xy_range: 0.035
+  reset_object_yaw_range: 0.5235987755982988
+  reset_gripper_xy_noise: 0.025
+  reset_gripper_z_noise: 0.01
+  initial_gripper_height: 0.16
+  initial_finger_position: 0.0
+  object_half_extents: [0.025, 0.025, 0.03]
+  object_mass: 0.03
+  object_friction: [1.2, 0.05, 0.01]
+  finger_friction: [2.5, 0.1, 0.02]
+
+reward:
+  reach_weight: 1.0
+  contact_weight: 0.25
+  lift_weight: 5.0
+  success_bonus: 10.0
+  action_penalty_weight: 0.01
+
+train:
+  seed: 0
+  num_envs: 1
+  total_timesteps: 500000
+  learning_rate: 0.0003
+  buffer_size: 1000000
+  learning_starts: 10000
+  batch_size: 256
+  gamma: 0.99
+  tau: 0.005
+  train_freq: 1
+  gradient_steps: 1
+  net_arch: [256, 256]
+  eval_freq: 25000
+  checkpoint_freq: 100000
+  device: auto
+
+eval:
+  episodes: 20
+  deterministic: true
+
+logging:
+  wandb_entity: contact-aware-rl
+  wandb_project: contact-aware-neural-dynamics
+  wandb_mode: online
+  sync_tensorboard: true
+  save_code: true
+  gradient_save_freq: 0
+  model_save_freq: 0
+  output_root: outputs

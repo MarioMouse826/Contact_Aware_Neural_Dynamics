@@ -137,6 +137,9 @@ class ContactAwareGraspLiftEnv(gym.Env[np.ndarray, np.ndarray]):
   <compiler angle="radian" autolimits="true"/>
   <option timestep="0.005" gravity="0 0 -9.81" integrator="RK4" cone="elliptic"/>
   <size nstack="300000"/>
+  <visual>
+    <global offwidth="1920" offheight="1080"/>
+  </visual>
   <default>
     <joint damping="4" armature="0.01"/>
     <geom solref="0.003 1" solimp="0.95 0.99 0.001" condim="4"/>

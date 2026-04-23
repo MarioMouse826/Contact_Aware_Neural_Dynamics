@@ -46,6 +46,14 @@ For the proposal ablation:
 .venv/bin/python -m contact_aware_rl.sweep --suite proposal --seeds 0 1 2 --num-envs 1
 ```
 
+## Record A Video
+
+```bash
+.venv/bin/python watch_ai.py --model-path outputs/<run-id>/best_model.zip
+```
+
+This writes an MP4 to `videos/<model-stem>.mp4`. For the W&B run `winter-darkness-20`, the local best checkpoint is `outputs/hig0lx6n/best_model.zip`.
+
 ## Tests
 
 ```bash

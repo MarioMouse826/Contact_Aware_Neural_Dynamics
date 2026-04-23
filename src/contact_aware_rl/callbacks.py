@@ -52,6 +52,7 @@ class PeriodicEvalCallback(BaseCallback):
         self.best_validation_tuple: tuple[float, ...] | None = None
         self.best_success_validation_tuple: tuple[float, ...] | None = None
         self.best_validation_summary: dict[str, Any] | None = None
+        self.best_timestep: int | None = None
         self.best_success_validation_summary: dict[str, Any] | None = None
         self.best_success_timestep: int | None = None
         self.final_monitor_summary: dict[str, Any] | None = None
@@ -66,7 +67,8 @@ class PeriodicEvalCallback(BaseCallback):
         self.validation_plateau_count = 0
         self.should_stop_training = False
 
-        self.best_model_path = self.output_dir / "best_success_model.zip"
+        self.best_model_path = self.output_dir / "best_model.zip"
+        self.best_success_model_path = self.output_dir / "best_success_model.zip"
         self.final_model_path = self.output_dir / "final_model.zip"
         self.checkpoint_dir = self.output_dir / "checkpoints"
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -183,6 +185,8 @@ class PeriodicEvalCallback(BaseCallback):
         if improved:
             self.best_validation_tuple = self._priority(summary)
             self.best_validation_summary = summary.to_dict()
+            self.best_timestep = int(summary.num_timesteps or 0)
+            self.model.save(str(self.best_model_path))
 
         if summary.success_rate >= self.early_stop_success_rate:
             self.consecutive_target_hits += 1
@@ -200,7 +204,7 @@ class PeriodicEvalCallback(BaseCallback):
             self.best_success_validation_tuple = self._priority(summary)
             self.best_success_validation_summary = summary.to_dict()
             self.best_success_timestep = int(summary.num_timesteps or 0)
-            self.model.save(str(self.best_model_path))
+            self.model.save(str(self.best_success_model_path))
 
         if (
             self.consecutive_target_hits >= self.early_stop_success_patience

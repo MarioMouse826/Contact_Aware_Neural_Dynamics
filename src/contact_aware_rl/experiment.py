@@ -63,6 +63,7 @@ class TrainingArtifacts:
     output_dir: Path
     config_path: Path
     metadata_path: Path
+    best_model_path: Path
     best_success_model_path: Path
     final_model_path: Path
     training_summary_path: Path
@@ -140,8 +141,13 @@ def _build_training_summary(
     eval_callback: PeriodicEvalCallback,
     test_summary: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    best_success_model_path = (
+    best_model_path = (
         str(eval_callback.best_model_path) if eval_callback.best_model_path.exists() else None
+    )
+    best_success_model_path = (
+        str(eval_callback.best_success_model_path)
+        if eval_callback.best_success_model_path.exists()
+        else None
     )
     return {
         "mode": mode,
@@ -152,6 +158,8 @@ def _build_training_summary(
         "output_dir": str(output_dir),
         "training_status": eval_callback.training_status,
         "stop_reason": eval_callback.stop_reason,
+        "best_model_path": best_model_path,
+        "best_timestep": eval_callback.best_timestep,
         "best_success_model_path": best_success_model_path,
         "final_model_path": str(eval_callback.final_model_path),
         "best_success_timestep": eval_callback.best_success_timestep,
@@ -332,7 +340,8 @@ def run_training(
             output_dir=output_dir,
             config_path=config_path,
             metadata_path=metadata_path,
-            best_success_model_path=eval_callback.best_model_path,
+            best_model_path=eval_callback.best_model_path,
+            best_success_model_path=eval_callback.best_success_model_path,
             final_model_path=eval_callback.final_model_path,
             training_summary_path=summary_path,
         )

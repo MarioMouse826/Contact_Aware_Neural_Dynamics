@@ -45,6 +45,8 @@ def test_summarize_episodes_reports_streak_and_termination_metrics() -> None:
                 "best_goal_distance_xy": 0.01,
                 "episode_has_grasped": 1.0,
                 "episode_has_lifted_grasp": 1.0,
+                "episode_has_lifted_for_transport": 1.0,
+                "episode_has_over_goal": 1.0,
                 "is_placed": 1.0,
                 "is_released": 1.0,
                 "is_settled": 1.0,
@@ -64,6 +66,8 @@ def test_summarize_episodes_reports_streak_and_termination_metrics() -> None:
                 "best_goal_distance_xy": 0.02,
                 "episode_has_grasped": 1.0,
                 "episode_has_lifted_grasp": 1.0,
+                "episode_has_lifted_for_transport": 1.0,
+                "episode_has_over_goal": 1.0,
                 "is_placed": 1.0,
                 "is_released": 0.0,
                 "is_settled": 0.0,
@@ -83,18 +87,22 @@ def test_summarize_episodes_reports_streak_and_termination_metrics() -> None:
                 "best_goal_distance_xy": 0.12,
                 "episode_has_grasped": 0.0,
                 "episode_has_lifted_grasp": 0.0,
+                "episode_has_lifted_for_transport": 0.0,
+                "episode_has_over_goal": 0.0,
                 "is_placed": 0.0,
                 "is_released": 0.0,
                 "is_settled": 0.0,
                 "termination_reason": "dropped",
             },
         ],
+        task="pick_place_ab",
         split="validation",
         base_seed=20_000,
         num_timesteps=25_000,
         near_success_threshold=5,
     )
 
+    assert summary.task == "pick_place_ab"
     assert summary.success_rate == pytest.approx(1.0 / 3.0)
     assert summary.near_success_rate == pytest.approx(2.0 / 3.0)
     assert summary.threshold_cross_rate == pytest.approx(2.0 / 3.0)
@@ -103,6 +111,8 @@ def test_summarize_episodes_reports_streak_and_termination_metrics() -> None:
     assert summary.mean_goal_distance_xy == pytest.approx((0.01 + 0.03 + 0.20) / 3.0)
     assert summary.grasp_rate == pytest.approx(2.0 / 3.0)
     assert summary.lifted_grasp_rate == pytest.approx(2.0 / 3.0)
+    assert summary.transport_ready_rate == pytest.approx(2.0 / 3.0)
+    assert summary.over_goal_rate == pytest.approx(2.0 / 3.0)
     assert summary.placement_rate == pytest.approx(2.0 / 3.0)
     assert summary.release_rate == pytest.approx(1.0 / 3.0)
     assert summary.settle_rate == pytest.approx(1.0 / 3.0)

@@ -432,6 +432,111 @@ def test_pick_place_transport_reward_requires_secure_grasp() -> None:
     env.close()
 
 
+def test_pick_place_contact_and_alignment_decay_after_lift() -> None:
+    env = ContactAwareGraspLiftEnv(
+        EnvConfig(
+            task="pick_place_ab",
+            observation_mode="contact",
+            max_episode_steps=200,
+        ),
+        RewardConfig(contact_weight=0.25, grasp_alignment_weight=1.0),
+    )
+    env.reset(seed=0)
+
+    env.set_manual_configuration(
+        gripper_xyz=PICK_PLACE_START_POS,
+        finger_positions=(0.048, 0.048),
+        object_position=PICK_PLACE_START_POS,
+    )
+    grounded_status = env._build_task_status(env._get_true_contact_bits())
+    grounded_potential = env._compute_potential_terms(
+        env._get_true_contact_bits(),
+        grounded_status,
+    )
+
+    env.set_manual_configuration(
+        gripper_xyz=(
+            PICK_PLACE_START_POS[0],
+            PICK_PLACE_START_POS[1],
+            PICK_PLACE_START_POS[2] + 0.06,
+        ),
+        finger_positions=(0.048, 0.048),
+        object_position=(
+            PICK_PLACE_START_POS[0],
+            PICK_PLACE_START_POS[1],
+            PICK_PLACE_START_POS[2] + 0.06,
+        ),
+    )
+    lifted_status = env._build_task_status(env._get_true_contact_bits())
+    lifted_potential = env._compute_potential_terms(
+        env._get_true_contact_bits(),
+        lifted_status,
+    )
+
+    assert grounded_status.is_grasped
+    assert lifted_status.is_lifted_grasp
+    assert lifted_potential.contact < grounded_potential.contact
+    assert lifted_potential.grasp_alignment < grounded_potential.grasp_alignment
+    env.close()
+
+
+def test_pick_place_transport_reward_grows_nearer_goal() -> None:
+    env = create_pick_place_env()
+    env.reset(seed=0)
+    lift_height = PICK_PLACE_START_POS[2] + 0.06
+
+    env.set_manual_configuration(
+        gripper_xyz=(PICK_PLACE_START_POS[0], PICK_PLACE_START_POS[1], lift_height),
+        finger_positions=(0.048, 0.048),
+        object_position=(PICK_PLACE_START_POS[0], PICK_PLACE_START_POS[1], lift_height),
+    )
+    start_status = env._build_task_status(env._get_true_contact_bits())
+    start_potential = env._compute_potential_terms(env._get_true_contact_bits(), start_status)
+
+    env._episode_has_lifted_for_transport = True
+    env.set_manual_configuration(
+        gripper_xyz=(PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], lift_height),
+        finger_positions=(0.048, 0.048),
+        object_position=(PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], lift_height),
+    )
+    goal_status = env._build_task_status(env._get_true_contact_bits())
+    goal_potential = env._compute_potential_terms(env._get_true_contact_bits(), goal_status)
+
+    assert start_status.is_lifted_grasp
+    assert goal_status.is_lifted_grasp
+    assert goal_potential.transport > start_potential.transport
+    assert (goal_potential.transport + goal_potential.place) > (
+        start_potential.transport + start_potential.place
+    )
+    env.close()
+
+
+def test_pick_place_place_shaping_activates_before_strict_xy_placement() -> None:
+    env = create_pick_place_env()
+    env.reset(seed=0)
+    xy_offset = 2.0 * env.env_config.pick_place_goal_tolerance_xy
+    near_goal_xy = (
+        PICK_PLACE_GOAL_POS[0] - xy_offset,
+        PICK_PLACE_GOAL_POS[1],
+        PICK_PLACE_GOAL_POS[2],
+    )
+    env._episode_has_lifted_for_transport = True
+    env.set_manual_configuration(
+        gripper_xyz=near_goal_xy,
+        finger_positions=(0.048, 0.048),
+        object_position=near_goal_xy,
+    )
+
+    status = env._build_task_status(env._get_true_contact_bits())
+    potential = env._compute_potential_terms(env._get_true_contact_bits(), status)
+
+    assert status.is_grasped
+    assert not status.is_over_goal
+    assert not status.is_placed
+    assert potential.place > 0.0
+    env.close()
+
+
 def test_arm_pick_place_penalizes_pregrasp_object_displacement() -> None:
     env = ArmPinchGraspLiftEnv(
         EnvConfig(
@@ -503,6 +608,31 @@ def test_contact_stability_tracks_any_and_dual_contact_separately() -> None:
 
     assert info["contact_stability"] == pytest.approx(1.0)
     assert info["dual_contact_stability"] == pytest.approx(0.5)
+    env.close()
+
+
+def test_pick_place_info_tracks_transport_ready_and_over_goal_flags() -> None:
+    env = create_pick_place_env()
+    env.reset(seed=0)
+    _prime_pick_place_transport(env)
+    bits = env._get_true_contact_bits()
+    status = env._build_task_status(bits)
+    reward_terms = env._compute_reward_terms(
+        np.zeros(env.action_space.shape[0], dtype=np.float32),
+        env._previous_potential,
+        env._previous_potential,
+        success=False,
+    )
+    info = env._build_info(
+        true_contact_bits=bits,
+        observed_contact_bits=bits,
+        task_status=status,
+        reward_terms=reward_terms,
+        success=False,
+    )
+
+    assert info["episode_has_lifted_for_transport"] == 1.0
+    assert info["episode_has_over_goal"] == 1.0
     env.close()
 
 

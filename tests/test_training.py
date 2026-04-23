@@ -51,6 +51,8 @@ def test_training_and_ablation_smoke(tmp_path: Path, embodiment: str) -> None:
         "success_checkpoint_selected",
         "no_success_checkpoint",
     }
+    assert "transport_ready_rate" in training_summary["final_validation_metrics"]
+    assert "over_goal_rate" in training_summary["final_validation_metrics"]
     assert len(monitor_history["history"]) >= 3
     assert len(validation_history["history"]) >= 3
     assert len(validation_history["history"]) == len(monitor_history["history"])

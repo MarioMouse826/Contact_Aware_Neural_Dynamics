@@ -5,13 +5,13 @@ env:
   reset_arm_joint_noise: 0.02
 
 reward:
-  reach_weight: 1.5
-  contact_weight: 0.5
-  grasp_alignment_weight: 1.5
-  start_stability_weight: 1.0
-  lift_weight: 10.0
-  transport_weight: 6.0
-  place_weight: 4.0
-  release_weight: 2.0
-  settle_weight: 3.0
+  reach_weight: 1.0
+  contact_weight: 0.25
+  grasp_alignment_weight: 1.0
+  start_stability_weight: 1.5
+  lift_weight: 6.0
+  transport_weight: 10.0
+  place_weight: 8.0
+  release_weight: 3.0
+  settle_weight: 4.0
   action_penalty_weight: 0.002

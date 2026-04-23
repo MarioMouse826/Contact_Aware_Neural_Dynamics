@@ -298,6 +298,7 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         self._episode_has_grasped = False
         self._episode_has_lifted_grasp = False
         self._episode_has_lifted_for_transport = False
+        self._episode_has_over_goal = False
         self._episode_has_placed = False
         self._episode_has_released = False
         self._episode_has_settled = False
@@ -571,23 +572,58 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         gripper_center = 0.5 * (left_tip + right_tip)
         reach_distance = float(np.linalg.norm(gripper_center - object_pos))
         reach = self.reward_config.reach_weight * math.exp(-10.0 * reach_distance)
-        contact = self._compute_contact_potential(true_contact_bits)
-        transport_readiness = 0.0
-        if task_status.is_grasped or self._episode_has_grasped:
-            transport_readiness = float(
-                np.clip(
-                    task_status.lift_clearance
-                    / max(1e-6, self.env_config.pick_place_transport_clearance),
-                    0.0,
-                    1.0,
-                )
+        lift_progress = float(
+            np.clip(
+                task_status.lift_clearance
+                / max(1e-6, self.env_config.pick_place_transport_clearance),
+                0.0,
+                1.0,
             )
+        )
+        goal_progress = float(
+            np.clip(
+                1.0 - (task_status.goal_distance_xy / self._pick_place_goal_span),
+                0.0,
+                1.0,
+            )
+        )
+        goal_zone_progress = float(
+            np.clip(
+                1.0
+                - (
+                    task_status.goal_distance_xy
+                    / max(1e-6, 4.0 * self.env_config.pick_place_goal_tolerance_xy)
+                ),
+                0.0,
+                1.0,
+            )
+        )
+        place_height_progress = float(
+            np.clip(
+                1.0
+                - (
+                    task_status.goal_height_error
+                    / max(1e-6, self.env_config.pick_place_rest_height_tolerance)
+                ),
+                0.0,
+                1.0,
+            )
+        )
+        transport_gate = max(
+            lift_progress,
+            0.5 if self._episode_has_lifted_for_transport and task_status.is_grasped else 0.0,
+        )
+        contact = (
+            self.reward_config.contact_weight
+            * self._compute_contact_progress(true_contact_bits)
+            * (1.0 - lift_progress)
+        )
 
         grasp_alignment_progress = self._compute_grasp_alignment_progress(object_pos)
         grasp_alignment = (
             self.reward_config.grasp_alignment_weight
             * grasp_alignment_progress
-            * (1.0 - transport_readiness)
+            * (1.0 - lift_progress)
         )
 
         start_distance_xy = float(
@@ -602,39 +638,17 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
                 -self.reward_config.start_stability_weight * start_displacement_progress
             )
 
-        lift_progress = 0.0
-        if task_status.is_grasped or self._episode_has_grasped:
-            lift_progress = transport_readiness
-        lift = self.reward_config.lift_weight * lift_progress
+        lift = self.reward_config.lift_weight * lift_progress * (1.0 - goal_progress)
 
         transport_progress = 0.0
         if task_status.is_grasped or self._episode_has_grasped:
-            transport_progress = float(
-                transport_readiness
-                * np.clip(
-                    1.0 - (task_status.goal_distance_xy / self._pick_place_goal_span),
-                    0.0,
-                    1.0,
-                )
-            )
+            transport_progress = float(transport_gate * (goal_progress**2))
         transport = self.reward_config.transport_weight * transport_progress
 
         place_progress = 0.0
-        if (
-            (task_status.is_grasped or self._episode_has_grasped)
-            and task_status.is_over_goal
-        ):
+        if task_status.is_grasped or self._episode_has_grasped:
             place_progress = float(
-                transport_readiness
-                * np.clip(
-                    1.0
-                    - (
-                        task_status.goal_height_error
-                        / max(1e-6, self.env_config.pick_place_rest_height_tolerance)
-                    ),
-                    0.0,
-                    1.0,
-                )
+                transport_gate * goal_zone_progress * place_height_progress
             )
         place = self.reward_config.place_weight * place_progress
 
@@ -748,6 +762,8 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
             and task_status.lift_clearance >= self.env_config.pick_place_transport_clearance
         ):
             self._episode_has_lifted_for_transport = True
+        if self._episode_has_lifted_for_transport and task_status.is_over_goal:
+            self._episode_has_over_goal = True
 
         valid_placed_state = self._episode_has_lifted_for_transport and task_status.is_placed
         if valid_placed_state:
@@ -818,6 +834,8 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
             "is_settled": float(task_status.is_settled),
             "episode_has_grasped": float(self._episode_has_grasped),
             "episode_has_lifted_grasp": float(self._episode_has_lifted_grasp),
+            "episode_has_lifted_for_transport": float(self._episode_has_lifted_for_transport),
+            "episode_has_over_goal": float(self._episode_has_over_goal),
             "episode_has_placed": float(self._episode_has_placed),
             "episode_has_released": float(self._episode_has_released),
             "episode_has_settled": float(self._episode_has_settled),
@@ -916,6 +934,7 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         self._episode_has_grasped = False
         self._episode_has_lifted_grasp = False
         self._episode_has_lifted_for_transport = False
+        self._episode_has_over_goal = False
         self._episode_has_placed = False
         self._episode_has_released = False
         self._episode_has_settled = False

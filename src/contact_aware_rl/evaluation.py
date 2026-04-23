@@ -19,6 +19,7 @@ EVAL_SPLITS = NAMED_EVAL_SPLITS + ("custom",)
 
 @dataclass(frozen=True)
 class EvaluationSummary:
+    task: str
     split: str
     base_seed: int
     num_timesteps: int | None
@@ -36,6 +37,8 @@ class EvaluationSummary:
     mean_best_goal_distance_xy: float
     grasp_rate: float
     lifted_grasp_rate: float
+    transport_ready_rate: float
+    over_goal_rate: float
     placement_rate: float
     release_rate: float
     settle_rate: float
@@ -73,6 +76,7 @@ def resolve_eval_split(
 def summarize_episodes(
     episodes: list[dict[str, Any]],
     *,
+    task: str,
     split: str,
     base_seed: int,
     num_timesteps: int | None = None,
@@ -86,6 +90,7 @@ def summarize_episodes(
     )
 
     return EvaluationSummary(
+        task=task,
         split=split,
         base_seed=base_seed,
         num_timesteps=num_timesteps,
@@ -122,6 +127,13 @@ def summarize_episodes(
         lifted_grasp_rate=mean(
             float(episode.get("episode_has_lifted_grasp", 0.0)) for episode in episodes
         ),
+        transport_ready_rate=mean(
+            float(episode.get("episode_has_lifted_for_transport", 0.0))
+            for episode in episodes
+        ),
+        over_goal_rate=mean(
+            float(episode.get("episode_has_over_goal", 0.0)) for episode in episodes
+        ),
         placement_rate=mean(float(episode.get("is_placed", 0.0)) for episode in episodes),
         release_rate=mean(float(episode.get("is_released", 0.0)) for episode in episodes),
         settle_rate=mean(float(episode.get("is_settled", 0.0)) for episode in episodes),
@@ -141,6 +153,7 @@ def evaluate_policy(
     split: str = DEFAULT_EVAL_SPLIT,
 ) -> EvaluationSummary:
     episodes: list[dict[str, Any]] = []
+    task = str(getattr(getattr(env, "env_config", None), "task", "unknown"))
     near_success_threshold = 1
     if hasattr(env, "success_hold_steps"):
         near_success_threshold = max(1, math.ceil(int(env.success_hold_steps) / 2))
@@ -184,6 +197,10 @@ def evaluate_policy(
                 "episode_has_lifted_grasp": float(
                     final_info.get("episode_has_lifted_grasp", 0.0)
                 ),
+                "episode_has_lifted_for_transport": float(
+                    final_info.get("episode_has_lifted_for_transport", 0.0)
+                ),
+                "episode_has_over_goal": float(final_info.get("episode_has_over_goal", 0.0)),
                 "is_placed": float(final_info.get("episode_has_placed", 0.0)),
                 "is_released": float(final_info.get("episode_has_released", 0.0)),
                 "is_settled": float(final_info.get("episode_has_settled", 0.0)),
@@ -193,6 +210,7 @@ def evaluate_policy(
 
     return summarize_episodes(
         episodes,
+        task=task,
         split=split,
         base_seed=base_seed,
         num_timesteps=num_timesteps,

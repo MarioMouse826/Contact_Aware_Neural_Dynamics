@@ -48,9 +48,9 @@ class PeriodicEvalCallback(BaseCallback):
 
         self.monitor_history: list[dict[str, Any]] = []
         self.validation_history: list[dict[str, Any]] = []
-        self.best_monitor_tuple: tuple[float, float, float, int] | None = None
-        self.best_validation_tuple: tuple[float, float, float, int] | None = None
-        self.best_success_validation_tuple: tuple[float, float, float, int] | None = None
+        self.best_monitor_tuple: tuple[float, ...] | None = None
+        self.best_validation_tuple: tuple[float, ...] | None = None
+        self.best_success_validation_tuple: tuple[float, ...] | None = None
         self.best_validation_summary: dict[str, Any] | None = None
         self.best_success_validation_summary: dict[str, Any] | None = None
         self.best_success_timestep: int | None = None
@@ -74,19 +74,32 @@ class PeriodicEvalCallback(BaseCallback):
     def _save_history(self, split: str, history: list[dict[str, Any]]) -> None:
         save_json({"split": split, "history": history}, self.output_dir / f"{split}_history.json")
 
-    def _priority(self, summary: EvaluationSummary) -> tuple[float, float, float, int]:
+    def _priority(self, summary: EvaluationSummary) -> tuple[float, ...]:
         timestep = int(summary.num_timesteps or 0)
+        if summary.task == "pick_place_ab":
+            return (
+                float(summary.success_rate),
+                float(summary.settle_rate),
+                float(summary.release_rate),
+                float(summary.placement_rate),
+                float(summary.over_goal_rate),
+                float(summary.transport_ready_rate),
+                float(summary.lifted_grasp_rate),
+                -float(summary.mean_best_goal_distance_xy),
+                -float(summary.mean_episode_length),
+                -float(timestep),
+            )
         return (
             float(summary.success_rate),
             float(summary.mean_best_success_streak),
             -float(summary.mean_episode_length),
-            -timestep,
+            -float(timestep),
         )
 
     def _is_better(
         self,
         summary: EvaluationSummary,
-        best_priority: tuple[float, float, float, int] | None,
+        best_priority: tuple[float, ...] | None,
     ) -> bool:
         if best_priority is None:
             return True
@@ -115,6 +128,8 @@ class PeriodicEvalCallback(BaseCallback):
         )
         self.logger.record(f"{prefix}/grasp_rate", summary.grasp_rate)
         self.logger.record(f"{prefix}/lifted_grasp_rate", summary.lifted_grasp_rate)
+        self.logger.record(f"{prefix}/transport_ready_rate", summary.transport_ready_rate)
+        self.logger.record(f"{prefix}/over_goal_rate", summary.over_goal_rate)
         self.logger.record(f"{prefix}/placement_rate", summary.placement_rate)
         self.logger.record(f"{prefix}/release_rate", summary.release_rate)
         self.logger.record(f"{prefix}/settle_rate", summary.settle_rate)

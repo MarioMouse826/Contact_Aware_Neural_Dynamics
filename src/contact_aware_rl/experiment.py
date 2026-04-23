@@ -92,6 +92,8 @@ def _build_monitored_env(
             "best_goal_distance_xy",
             "episode_has_grasped",
             "episode_has_lifted_grasp",
+            "episode_has_lifted_for_transport",
+            "episode_has_over_goal",
             "episode_has_placed",
             "episode_has_released",
             "episode_has_settled",

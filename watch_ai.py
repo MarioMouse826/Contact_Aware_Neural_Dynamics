@@ -19,6 +19,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from contact_aware_rl.config import load_experiment_config
 from contact_aware_rl.env import ContactAwareGraspLiftEnv
+from contact_aware_rl.evaluation import DEFAULT_EVAL_SPLIT, EVAL_SPLITS, resolve_eval_split
 from contact_aware_rl.modes import apply_mode_overrides, infer_mode_from_env_config, resolve_mode
 
 
@@ -43,11 +44,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--episodes", type=int, default=1, help="Number of episodes to record.")
     parser.add_argument(
-        "--seed",
+        "--split",
+        choices=EVAL_SPLITS,
+        default=DEFAULT_EVAL_SPLIT,
+        help="Named evaluation split. Use `custom` together with --base-seed.",
+    )
+    parser.add_argument(
+        "--base-seed",
         type=int,
         default=None,
-        help="Base seed for playback. Defaults to the training seed from the config.",
+        help="Override the base seed for `custom` playback.",
     )
+    parser.add_argument("--seed", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument(
         "--max-steps",
         type=int,
@@ -217,7 +225,13 @@ def record_policy_video(args: argparse.Namespace) -> dict[str, Any]:
         writer = _open_writer(output_video, width=width, height=height, fps=fps)
         renderer = mujoco.Renderer(env.model, height=height, width=width)
 
-        base_seed = eval_config.train.seed if args.seed is None else args.seed
+        seed_override = args.base_seed if args.base_seed is not None else args.seed
+        resolved_split, _, base_seed = resolve_eval_split(
+            eval_config,
+            split=args.split,
+            episodes=args.episodes,
+            base_seed=seed_override,
+        )
         max_steps = args.max_steps or int(eval_config.env.max_episode_steps)
 
         episodes: list[dict[str, Any]] = []
@@ -264,6 +278,8 @@ def record_policy_video(args: argparse.Namespace) -> dict[str, Any]:
             "checkpoint_path": str(checkpoint_path),
             "config_path": str(config_path),
             "mode": mode,
+            "split": resolved_split,
+            "base_seed": base_seed,
             "output_video": str(output_video),
             "episodes": episodes,
             "fps": fps,

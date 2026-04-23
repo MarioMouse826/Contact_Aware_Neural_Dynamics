@@ -79,7 +79,7 @@ def test_observation_shapes_and_contact_overrides() -> None:
     zero_env.close()
 
 
-def test_reward_terms_increase_with_contact_and_lift() -> None:
+def test_reward_potential_increases_with_two_finger_contact_and_lift() -> None:
     env = make_env()
 
     env.set_manual_configuration(
@@ -87,33 +87,52 @@ def test_reward_terms_increase_with_contact_and_lift() -> None:
         finger_positions=(0.0, 0.0),
         object_position=(0.0, 0.0, 0.08),
     )
-    no_contact = env._compute_reward_terms(
-        np.zeros(4, dtype=np.float32),
-        env._get_true_contact_bits(),
+    no_contact = env._compute_potential_terms(env._get_true_contact_bits())
+
+    env.set_manual_configuration(
+        gripper_xyz=(0.0, 0.0, 0.08),
+        finger_positions=(0.05, 0.0),
+        object_position=(-0.044, 0.0, 0.08),
     )
+    single_contact = env._compute_potential_terms(env._get_true_contact_bits())
 
     env.set_manual_configuration(
         gripper_xyz=(0.0, 0.0, 0.08),
         finger_positions=(0.048, 0.048),
         object_position=(0.0, 0.0, 0.08),
     )
-    with_contact = env._compute_reward_terms(
-        np.zeros(4, dtype=np.float32),
-        env._get_true_contact_bits(),
-    )
+    with_contact = env._compute_potential_terms(env._get_true_contact_bits())
 
     env.set_manual_configuration(
         gripper_xyz=(0.0, 0.0, 0.15),
         finger_positions=(0.048, 0.048),
         object_position=(0.0, 0.0, 0.16),
     )
-    lifted = env._compute_reward_terms(
-        np.zeros(4, dtype=np.float32),
-        env._get_true_contact_bits(),
-    )
+    lifted = env._compute_potential_terms(env._get_true_contact_bits())
 
+    assert single_contact.contact == no_contact.contact
     assert with_contact.contact > no_contact.contact
     assert lifted.lift > with_contact.lift
+    env.close()
+
+
+def test_shaped_reward_does_not_accumulate_on_plateau() -> None:
+    env = make_env()
+
+    env.set_manual_configuration(
+        gripper_xyz=(0.0, 0.0, 0.15),
+        finger_positions=(0.048, 0.048),
+        object_position=(0.0, 0.0, 0.16),
+    )
+    potential = env._compute_potential_terms(env._get_true_contact_bits())
+    reward_terms = env._compute_reward_terms(
+        np.zeros(4, dtype=np.float32),
+        potential,
+        potential,
+        success=False,
+    )
+
+    assert reward_terms.total == 0.0
     env.close()
 
 

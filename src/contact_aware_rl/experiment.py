@@ -22,8 +22,9 @@ from .callbacks import PeriodicEvalCallback
 from .config import EnvConfig, ExperimentConfig, RewardConfig, save_experiment_config
 from .env import ContactAwareGraspLiftEnv
 from .evaluation import (
-    compute_steps_to_80pct_success,
+    compute_steps_to_success_threshold,
     evaluate_policy,
+    resolve_eval_split,
     save_json,
 )
 from .logging_utils import prepare_output_dir, resolve_run_id, start_wandb_run
@@ -39,7 +40,7 @@ class TrainingArtifacts:
     output_dir: Path
     config_path: Path
     metadata_path: Path
-    best_model_path: Path
+    best_success_model_path: Path
     final_model_path: Path
     training_summary_path: Path
 
@@ -56,7 +57,14 @@ def _build_monitored_env(
     wrapped_env.reset(seed=seed)
     return Monitor(
         wrapped_env,
-        info_keywords=("is_success", "contact_stability", "max_lift_height"),
+        info_keywords=(
+            "is_success",
+            "contact_stability",
+            "max_lift_height",
+            "best_success_streak",
+            "threshold_crossed",
+            "steps_above_success_height",
+        ),
     )
 
 
@@ -93,20 +101,34 @@ def _build_training_summary(
     run_id: str,
     config: ExperimentConfig,
     output_dir: Path,
-    eval_history: list[dict[str, Any]],
+    eval_callback: PeriodicEvalCallback,
+    test_summary: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    final_record = eval_history[-1] if eval_history else {}
+    best_success_model_path = (
+        str(eval_callback.best_model_path) if eval_callback.best_model_path.exists() else None
+    )
     return {
         "mode": mode,
         "run_id": run_id,
         "seed": config.train.seed,
         "num_envs": config.train.num_envs,
         "output_dir": str(output_dir),
-        "final_success_rate": final_record.get("success_rate"),
-        "final_mean_reward": final_record.get("mean_reward"),
-        "final_mean_contact_stability": final_record.get("mean_contact_stability"),
-        "steps_to_80pct_success": compute_steps_to_80pct_success(eval_history),
-        "evaluation_history": eval_history,
+        "training_status": eval_callback.training_status,
+        "stop_reason": eval_callback.stop_reason,
+        "best_success_model_path": best_success_model_path,
+        "final_model_path": str(eval_callback.final_model_path),
+        "best_success_timestep": eval_callback.best_success_timestep,
+        "best_validation_metrics": eval_callback.best_validation_summary,
+        "best_success_validation_metrics": eval_callback.best_success_validation_summary,
+        "final_monitor_metrics": eval_callback.final_monitor_summary,
+        "final_validation_metrics": eval_callback.final_validation_summary,
+        "monitor_history_path": str(output_dir / "monitor_history.json"),
+        "validation_history_path": str(output_dir / "validation_history.json"),
+        "test_metrics": test_summary,
+        "steps_to_target_validation_success": compute_steps_to_success_threshold(
+            eval_callback.validation_history,
+            threshold=config.train.early_stop_success_rate,
+        ),
     }
 
 
@@ -155,7 +177,8 @@ def run_training(
     )
 
     training_env = None
-    eval_env = None
+    monitor_env = None
+    validation_env = None
     try:
         run_id = resolve_run_id(run)
         output_dir = prepare_output_dir(run_config.logging.output_root, run_id)
@@ -178,7 +201,8 @@ def run_training(
         save_json(metadata, metadata_path)
 
         training_env = _make_vector_env(run_config)
-        eval_env = _build_eval_env(run_config)
+        monitor_env = _build_eval_env(run_config)
+        validation_env = _build_eval_env(run_config)
 
         model = SAC(
             "MlpPolicy",
@@ -200,14 +224,35 @@ def run_training(
         logger = configure_logger(str(logs_dir), ["stdout", "csv", "json", "tensorboard"])
         model.set_logger(logger)
 
+        monitor_split, monitor_episodes, monitor_seed = resolve_eval_split(
+            run_config,
+            split="monitor",
+        )
+        validation_split, validation_episodes, validation_seed = resolve_eval_split(
+            run_config,
+            split="validation",
+        )
+        if monitor_split != "monitor" or validation_split != "validation":
+            raise ValueError("Failed to resolve named evaluation splits.")
+
         eval_callback = PeriodicEvalCallback(
-            eval_env=eval_env,
+            monitor_env=monitor_env,
+            validation_env=validation_env,
             output_dir=output_dir,
+            total_timesteps=run_config.train.total_timesteps,
             eval_freq=run_config.train.eval_freq,
             checkpoint_freq=run_config.train.checkpoint_freq,
-            n_eval_episodes=run_config.eval.episodes,
+            monitor_episodes=monitor_episodes,
+            monitor_seed=monitor_seed,
+            validation_episodes=validation_episodes,
+            validation_seed=validation_seed,
             deterministic=run_config.eval.deterministic,
-            eval_seed=run_config.train.seed + 10_000,
+            early_stop_success_rate=run_config.train.early_stop_success_rate,
+            early_stop_success_patience=run_config.train.early_stop_success_patience,
+            early_stop_plateau_patience=run_config.train.early_stop_plateau_patience,
+            early_stop_plateau_start_timesteps=(
+                run_config.train.early_stop_plateau_start_timesteps
+            ),
         )
         wandb_callback = WandbCallback(
             gradient_save_freq=run_config.logging.gradient_save_freq,
@@ -223,12 +268,23 @@ def run_training(
             progress_bar=False,
         )
 
+        test_summary = None
+        if eval_callback.best_model_path.exists():
+            test_summary = evaluate_checkpoint(
+                eval_callback.best_model_path,
+                mode=mode,
+                config_path=config_path,
+                split="test",
+                output_path=output_dir / "test_summary.json",
+            )
+
         summary = _build_training_summary(
             mode=mode,
             run_id=run_id,
             config=run_config,
             output_dir=output_dir,
-            eval_history=eval_callback.history,
+            eval_callback=eval_callback,
+            test_summary=test_summary,
         )
         save_json(summary, summary_path)
 
@@ -238,15 +294,17 @@ def run_training(
             output_dir=output_dir,
             config_path=config_path,
             metadata_path=metadata_path,
-            best_model_path=eval_callback.best_model_path,
+            best_success_model_path=eval_callback.best_model_path,
             final_model_path=eval_callback.final_model_path,
             training_summary_path=summary_path,
         )
     finally:
         if training_env is not None:
             training_env.close()
-        if eval_env is not None:
-            eval_env.close()
+        if monitor_env is not None:
+            monitor_env.close()
+        if validation_env is not None:
+            validation_env.close()
         if hasattr(run, "finish"):
             run.finish()
 
@@ -262,7 +320,9 @@ def evaluate_checkpoint(
     *,
     mode: str,
     config_path: str | Path | None = None,
+    split: str = "validation",
     episodes: int | None = None,
+    base_seed: int | None = None,
     output_path: str | Path | None = None,
 ) -> dict[str, Any]:
     checkpoint_path = Path(checkpoint_path)
@@ -285,8 +345,12 @@ def evaluate_checkpoint(
         )
 
     eval_config = apply_mode_overrides(config, mode)
-    if episodes is not None:
-        eval_config.eval.episodes = episodes
+    resolved_split, resolved_episodes, resolved_base_seed = resolve_eval_split(
+        eval_config,
+        split=split,
+        episodes=episodes,
+        base_seed=base_seed,
+    )
 
     eval_env = _build_eval_env(eval_config)
     try:
@@ -294,9 +358,10 @@ def evaluate_checkpoint(
         summary = evaluate_policy(
             model,
             eval_env,
-            n_episodes=eval_config.eval.episodes,
+            n_episodes=resolved_episodes,
             deterministic=eval_config.eval.deterministic,
-            base_seed=eval_config.train.seed + 20_000,
+            base_seed=resolved_base_seed,
+            split=resolved_split,
         )
     finally:
         eval_env.close()
@@ -305,13 +370,15 @@ def evaluate_checkpoint(
         "requested_mode": mode,
         "training_mode": training_mode,
         "checkpoint_path": str(checkpoint_path),
-        "episodes": eval_config.eval.episodes,
+        "split": resolved_split,
+        "base_seed": resolved_base_seed,
+        "episodes": resolved_episodes,
         **summary.to_dict(),
     }
     target_path = (
         Path(output_path)
         if output_path is not None
-        else checkpoint_path.parent / f"evaluation_{mode}.json"
+        else checkpoint_path.parent / f"evaluation_{mode}_{resolved_split}.json"
     )
     save_json(payload, target_path)
     return payload
@@ -325,29 +392,21 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     aggregate: dict[str, Any] = {}
     for mode, mode_results in grouped.items():
         success_rates = [
-            float(result["final_success_rate"])
+            float(result["success_rate"])
             for result in mode_results
-            if result.get("final_success_rate") is not None
-        ]
-        steps_to_80 = [
-            int(result["steps_to_80pct_success"])
-            for result in mode_results
-            if result.get("steps_to_80pct_success") is not None
+            if result.get("success_rate") is not None
         ]
         contact_stability = [
-            float(result["final_mean_contact_stability"])
+            float(result["mean_contact_stability"])
             for result in mode_results
-            if result.get("final_mean_contact_stability") is not None
+            if result.get("mean_contact_stability") is not None
         ]
         aggregate[mode] = {
             "num_runs": len(mode_results),
-            "mean_final_success_rate": (
+            "mean_success_rate": (
                 sum(success_rates) / len(success_rates) if success_rates else None
             ),
-            "mean_steps_to_80pct_success": (
-                sum(steps_to_80) / len(steps_to_80) if steps_to_80 else None
-            ),
-            "mean_final_contact_stability": (
+            "mean_contact_stability": (
                 sum(contact_stability) / len(contact_stability)
                 if contact_stability
                 else None
@@ -378,25 +437,25 @@ def run_proposal_suite(
                 wandb_mode=wandb_mode,
             )
             training_summary = _load_json_if_exists(artifacts.training_summary_path)
+            best_validation_metrics = training_summary.get("best_validation_metrics") or {}
             results.append(
                 {
                     "mode": mode,
                     "seed": seed,
                     "run_id": artifacts.run_id,
-                    "final_success_rate": training_summary.get("final_success_rate"),
-                    "steps_to_80pct_success": training_summary.get(
-                        "steps_to_80pct_success"
-                    ),
-                    "final_mean_contact_stability": training_summary.get(
-                        "final_mean_contact_stability"
+                    "training_status": training_summary.get("training_status"),
+                    "success_rate": best_validation_metrics.get("success_rate"),
+                    "mean_contact_stability": best_validation_metrics.get(
+                        "mean_contact_stability"
                     ),
                 }
             )
 
-            if mode == "contact":
+            if mode == "contact" and artifacts.best_success_model_path.exists():
                 ablation_payload = evaluate_checkpoint(
-                    artifacts.best_model_path,
+                    artifacts.best_success_model_path,
                     mode="contact_ablation",
+                    split="validation",
                     output_path=suite_dir / f"contact_ablation_seed{seed}.json",
                 )
                 results.append(
@@ -404,11 +463,22 @@ def run_proposal_suite(
                         "mode": "contact_ablation",
                         "seed": seed,
                         "run_id": artifacts.run_id,
-                        "final_success_rate": ablation_payload.get("success_rate"),
-                        "steps_to_80pct_success": None,
-                        "final_mean_contact_stability": ablation_payload.get(
+                        "training_status": training_summary.get("training_status"),
+                        "success_rate": ablation_payload.get("success_rate"),
+                        "mean_contact_stability": ablation_payload.get(
                             "mean_contact_stability"
                         ),
+                    }
+                )
+            elif mode == "contact":
+                results.append(
+                    {
+                        "mode": "contact_ablation",
+                        "seed": seed,
+                        "run_id": artifacts.run_id,
+                        "training_status": "skipped_no_success_checkpoint",
+                        "success_rate": None,
+                        "mean_contact_stability": None,
                     }
                 )
 

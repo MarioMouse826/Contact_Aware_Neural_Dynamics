@@ -40,6 +40,7 @@ class RewardConfig:
     reach_weight: float = 1.0
     contact_weight: float = 0.25
     lift_weight: float = 5.0
+    hold_weight: float = 2.0
     success_bonus: float = 10.0
     action_penalty_weight: float = 0.01
 
@@ -60,13 +61,57 @@ class TrainConfig:
     net_arch: list[int] = field(default_factory=lambda: [256, 256])
     eval_freq: int = 25_000
     checkpoint_freq: int = 100_000
+    early_stop_success_rate: float = 0.8
+    early_stop_success_patience: int = 2
+    early_stop_plateau_patience: int = 5
+    early_stop_plateau_start_timesteps: int = 150_000
     device: str = "auto"
 
 
 @dataclass
+class EvalSplitConfig:
+    episodes: int
+    seed_offset: int
+
+
+@dataclass
 class EvalConfig:
-    episodes: int = 20
     deterministic: bool = True
+    monitor: EvalSplitConfig = field(
+        default_factory=lambda: EvalSplitConfig(episodes=20, seed_offset=10_000)
+    )
+    validation: EvalSplitConfig = field(
+        default_factory=lambda: EvalSplitConfig(episodes=100, seed_offset=20_000)
+    )
+    test: EvalSplitConfig = field(
+        default_factory=lambda: EvalSplitConfig(episodes=100, seed_offset=30_000)
+    )
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any] | None = None) -> "EvalConfig":
+        payload = payload or {}
+        legacy_episodes = payload.get("episodes")
+        return cls(
+            deterministic=payload.get("deterministic", True),
+            monitor=_build_eval_split_config(
+                payload=payload.get("monitor"),
+                default_episodes=20,
+                default_seed_offset=10_000,
+                legacy_episodes=legacy_episodes,
+            ),
+            validation=_build_eval_split_config(
+                payload=payload.get("validation"),
+                default_episodes=100,
+                default_seed_offset=20_000,
+                legacy_episodes=legacy_episodes,
+            ),
+            test=_build_eval_split_config(
+                payload=payload.get("test"),
+                default_episodes=100,
+                default_seed_offset=30_000,
+                legacy_episodes=legacy_episodes,
+            ),
+        )
 
 
 @dataclass
@@ -102,9 +147,28 @@ class ExperimentConfig:
             env=EnvConfig(**payload.get("env", {})),
             reward=RewardConfig(**payload.get("reward", {})),
             train=TrainConfig(**payload.get("train", {})),
-            eval=EvalConfig(**payload.get("eval", {})),
+            eval=EvalConfig.from_dict(payload.get("eval", {})),
             logging=LoggingConfig(**payload.get("logging", {})),
         )
+
+
+def _build_eval_split_config(
+    *,
+    payload: dict[str, Any] | None,
+    default_episodes: int,
+    default_seed_offset: int,
+    legacy_episodes: int | None,
+) -> EvalSplitConfig:
+    payload = payload or {}
+    return EvalSplitConfig(
+        episodes=int(
+            payload.get(
+                "episodes",
+                legacy_episodes if legacy_episodes is not None else default_episodes,
+            )
+        ),
+        seed_offset=int(payload.get("seed_offset", default_seed_offset)),
+    )
 
 
 def _merge_dicts(base: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:

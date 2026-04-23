@@ -13,12 +13,27 @@ from .config import EnvConfig, RewardConfig
 
 
 @dataclass(frozen=True)
+class PotentialTerms:
+    reach: float
+    contact: float
+    lift: float
+    hold: float
+
+    @property
+    def total(self) -> float:
+        return self.reach + self.contact + self.lift + self.hold
+
+
+@dataclass(frozen=True)
 class RewardTerms:
     reach: float
     contact: float
     lift: float
+    hold: float
     success_bonus: float
     action_penalty: float
+    current_potential: PotentialTerms
+    previous_potential: PotentialTerms
 
     @property
     def total(self) -> float:
@@ -26,6 +41,7 @@ class RewardTerms:
             self.reach
             + self.contact
             + self.lift
+            + self.hold
             + self.success_bonus
             - self.action_penalty
         )
@@ -99,6 +115,7 @@ class ContactAwareGraspLiftEnv(gym.Env[np.ndarray, np.ndarray]):
         self._success_height = (
             self.env_config.table_height + self.env_config.success_height_over_table
         )
+        self._lift_target_span = max(1e-6, self._success_height - self._lift_start_height)
 
         self.action_space = spaces.Box(
             low=-1.0,
@@ -118,6 +135,9 @@ class ContactAwareGraspLiftEnv(gym.Env[np.ndarray, np.ndarray]):
         self._episode_both_contact_steps = 0
         self._episode_max_height = 0.0
         self._success_streak = 0
+        self._episode_steps_above_success_height = 0
+        self._episode_best_success_streak = 0
+        self._previous_potential = PotentialTerms(0.0, 0.0, 0.0, 0.0)
 
     def _name_to_id(self, obj_type: int, name: str) -> int:
         identifier = mujoco.mj_name2id(self.model, obj_type, name)
@@ -251,38 +271,53 @@ class ContactAwareGraspLiftEnv(gym.Env[np.ndarray, np.ndarray]):
             obs_parts.append(observed_contact_bits.astype(np.float32))
         return np.concatenate(obs_parts).astype(np.float32)
 
-    def _compute_reward_terms(
-        self, action: np.ndarray, true_contact_bits: np.ndarray
-    ) -> RewardTerms:
+    def _compute_potential_terms(self, true_contact_bits: np.ndarray) -> PotentialTerms:
         object_pos, _ = self._get_object_state()
         left_tip, right_tip = self._get_fingertip_positions()
         gripper_center = 0.5 * (left_tip + right_tip)
         reach_distance = float(np.linalg.norm(gripper_center - object_pos))
         reach = self.reward_config.reach_weight * math.exp(-10.0 * reach_distance)
-        contact = self.reward_config.contact_weight * float(np.sum(true_contact_bits))
+        contact = self.reward_config.contact_weight * float(np.all(true_contact_bits > 0.5))
         lift_progress = float(
             np.clip(
                 (object_pos[2] - self._lift_start_height)
-                / self.env_config.success_height_over_table,
+                / self._lift_target_span,
                 0.0,
                 1.0,
             )
         )
         lift = self.reward_config.lift_weight * lift_progress
-        success_bonus = (
-            self.reward_config.success_bonus
-            if self._success_streak >= self.env_config.success_hold_steps
-            else 0.0
+        hold_progress = float(
+            np.clip(
+                self._success_streak / max(1, self.env_config.success_hold_steps),
+                0.0,
+                1.0,
+            )
         )
+        hold = self.reward_config.hold_weight * hold_progress
+        return PotentialTerms(reach=reach, contact=contact, lift=lift, hold=hold)
+
+    def _compute_reward_terms(
+        self,
+        action: np.ndarray,
+        previous_potential: PotentialTerms,
+        current_potential: PotentialTerms,
+        *,
+        success: bool,
+    ) -> RewardTerms:
         action_penalty = self.reward_config.action_penalty_weight * float(
             np.square(action).sum()
         )
+        success_bonus = self.reward_config.success_bonus if success else 0.0
         return RewardTerms(
-            reach=reach,
-            contact=contact,
-            lift=lift,
+            reach=current_potential.reach - previous_potential.reach,
+            contact=current_potential.contact - previous_potential.contact,
+            lift=current_potential.lift - previous_potential.lift,
+            hold=current_potential.hold - previous_potential.hold,
             success_bonus=success_bonus,
             action_penalty=action_penalty,
+            current_potential=current_potential,
+            previous_potential=previous_potential,
         )
 
     def _build_info(
@@ -302,15 +337,24 @@ class ContactAwareGraspLiftEnv(gym.Env[np.ndarray, np.ndarray]):
             ),
             "max_lift_height": float(self._episode_max_height),
             "object_height": float(object_pos[2] - self.env_config.table_height),
+            "best_success_streak": int(self._episode_best_success_streak),
+            "steps_above_success_height": int(self._episode_steps_above_success_height),
+            "threshold_crossed": float(self._episode_steps_above_success_height > 0),
             "true_contact_left": float(true_contact_bits[0]),
             "true_contact_right": float(true_contact_bits[1]),
             "observed_contact_left": float(observed_contact_bits[0]),
             "observed_contact_right": float(observed_contact_bits[1]),
-            "reward/reach": reward_terms.reach,
-            "reward/contact": reward_terms.contact,
-            "reward/lift": reward_terms.lift,
+            "reward/reach_delta": reward_terms.reach,
+            "reward/contact_delta": reward_terms.contact,
+            "reward/lift_delta": reward_terms.lift,
+            "reward/hold_delta": reward_terms.hold,
             "reward/success_bonus": reward_terms.success_bonus,
             "reward/action_penalty": reward_terms.action_penalty,
+            "reward/total": reward_terms.total,
+            "potential/reach": reward_terms.current_potential.reach,
+            "potential/contact": reward_terms.current_potential.contact,
+            "potential/lift": reward_terms.current_potential.lift,
+            "potential/hold": reward_terms.current_potential.hold,
         }
         if termination_reason is not None:
             info["termination_reason"] = termination_reason
@@ -407,10 +451,22 @@ class ContactAwareGraspLiftEnv(gym.Env[np.ndarray, np.ndarray]):
         self._episode_both_contact_steps = 0
         self._episode_max_height = object_z - self.env_config.table_height
         self._success_streak = 0
+        self._episode_steps_above_success_height = 0
+        self._episode_best_success_streak = 0
 
         true_contact_bits = self._get_true_contact_bits()
         observed_contact_bits = self._get_observed_contact_bits(true_contact_bits)
-        reward_terms = RewardTerms(0.0, 0.0, 0.0, 0.0, 0.0)
+        self._previous_potential = self._compute_potential_terms(true_contact_bits)
+        reward_terms = RewardTerms(
+            reach=0.0,
+            contact=0.0,
+            lift=0.0,
+            hold=0.0,
+            success_bonus=0.0,
+            action_penalty=0.0,
+            current_potential=self._previous_potential,
+            previous_potential=self._previous_potential,
+        )
         observation = self._get_observation(true_contact_bits)
         info = self._build_info(
             true_contact_bits=true_contact_bits,
@@ -443,11 +499,22 @@ class ContactAwareGraspLiftEnv(gym.Env[np.ndarray, np.ndarray]):
 
         if object_pos[2] >= self._success_height:
             self._success_streak += 1
+            self._episode_steps_above_success_height += 1
         else:
             self._success_streak = 0
+        self._episode_best_success_streak = max(
+            self._episode_best_success_streak, self._success_streak
+        )
 
         success = self._success_streak >= self.env_config.success_hold_steps
-        reward_terms = self._compute_reward_terms(action, true_contact_bits)
+        current_potential = self._compute_potential_terms(true_contact_bits)
+        reward_terms = self._compute_reward_terms(
+            action,
+            self._previous_potential,
+            current_potential,
+            success=success,
+        )
+        self._previous_potential = current_potential
 
         terminated = False
         termination_reason: str | None = None

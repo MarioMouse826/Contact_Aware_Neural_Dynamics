@@ -25,37 +25,37 @@ uv sync
 ## Train
 
 ```bash
-.venv/bin/python -m contact_aware_rl.train --mode contact --seed 0 --num-envs 1
+python -m contact_aware_rl.train --mode contact --seed 0 --num-envs 1
 ```
 
 ## Evaluate
 
 ```bash
-.venv/bin/python -m contact_aware_rl.evaluate --checkpoint outputs/<run-id>/best_model.zip --mode contact --episodes 20
+python -m contact_aware_rl.evaluate --checkpoint outputs/<run-id>/best_success_model.zip --mode contact --split validation
 ```
 
 For the proposal ablation:
 
 ```bash
-.venv/bin/python -m contact_aware_rl.evaluate --checkpoint outputs/<run-id>/best_model.zip --mode contact_ablation --episodes 20
+python -m contact_aware_rl.evaluate --checkpoint outputs/<run-id>/best_success_model.zip --mode contact_ablation --split validation
 ```
 
 ## Run The Proposal Suite
 
 ```bash
-.venv/bin/python -m contact_aware_rl.sweep --suite proposal --seeds 0 1 2 --num-envs 1
+python -m contact_aware_rl.sweep --suite proposal --seeds 0 1 2 --num-envs 1
 ```
 
 ## Record A Video
 
 ```bash
-.venv/bin/python watch_ai.py --model-path outputs/<run-id>/best_model.zip
+python watch_ai.py --model-path outputs/<run-id>/best_success_model.zip --split validation
 ```
 
-This writes an MP4 to `videos/<model-stem>.mp4`. For the W&B run `winter-darkness-20`, the local best checkpoint is `outputs/hig0lx6n/best_model.zip`.
+This writes an MP4 to `videos/<model-stem>.mp4` and records the split/base seed in the output JSON. If a run never reaches nonzero validation success, it will not emit `best_success_model.zip`.
 
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest
+python -m pytest
 ```

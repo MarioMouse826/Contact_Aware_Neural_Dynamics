@@ -46,7 +46,7 @@ def main() -> None:
                 "run_id": artifacts.run_id,
                 "mode": artifacts.mode,
                 "output_dir": str(artifacts.output_dir),
-                "best_model_path": str(artifacts.best_model_path),
+                "best_success_model_path": str(artifacts.best_success_model_path),
                 "final_model_path": str(artifacts.final_model_path),
                 "training_summary_path": str(artifacts.training_summary_path),
             },

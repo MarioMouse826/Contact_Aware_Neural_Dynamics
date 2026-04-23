@@ -432,6 +432,42 @@ def test_pick_place_transport_reward_requires_secure_grasp() -> None:
     env.close()
 
 
+def test_pick_place_transport_reward_requires_lift_before_xy_transport() -> None:
+    env = create_pick_place_env()
+    env.reset(seed=0)
+
+    env.set_manual_configuration(
+        gripper_xyz=PICK_PLACE_GOAL_POS,
+        finger_positions=(0.048, 0.048),
+        object_position=PICK_PLACE_GOAL_POS,
+    )
+    grounded_status = env._build_task_status(env._get_true_contact_bits())
+    grounded_potential = env._compute_potential_terms(
+        env._get_true_contact_bits(),
+        grounded_status,
+    )
+
+    lift_height = PICK_PLACE_GOAL_POS[2] + 0.06
+    env.set_manual_configuration(
+        gripper_xyz=(PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], lift_height),
+        finger_positions=(0.048, 0.048),
+        object_position=(PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], lift_height),
+    )
+    lifted_status = env._build_task_status(env._get_true_contact_bits())
+    lifted_potential = env._compute_potential_terms(
+        env._get_true_contact_bits(),
+        lifted_status,
+    )
+
+    assert grounded_status.is_grasped
+    assert not grounded_status.is_lifted_grasp
+    assert grounded_potential.transport == 0.0
+    assert grounded_potential.place == 0.0
+    assert lifted_status.is_lifted_grasp
+    assert lifted_potential.transport > 0.0
+    env.close()
+
+
 def test_pick_place_contact_and_alignment_decay_after_lift() -> None:
     env = ContactAwareGraspLiftEnv(
         EnvConfig(
@@ -505,8 +541,8 @@ def test_pick_place_transport_reward_grows_nearer_goal() -> None:
     assert start_status.is_lifted_grasp
     assert goal_status.is_lifted_grasp
     assert goal_potential.transport > start_potential.transport
-    assert (goal_potential.transport + goal_potential.place) > (
-        start_potential.transport + start_potential.place
+    assert (goal_potential.lift + goal_potential.transport + goal_potential.place) > (
+        start_potential.lift + start_potential.transport + start_potential.place
     )
     env.close()
 
@@ -534,6 +570,75 @@ def test_pick_place_place_shaping_activates_before_strict_xy_placement() -> None
     assert not status.is_over_goal
     assert not status.is_placed
     assert potential.place > 0.0
+    env.close()
+
+
+def test_pick_place_place_shaping_grows_while_descending_over_goal() -> None:
+    env = create_pick_place_env()
+    env.reset(seed=0)
+    env._episode_has_lifted_for_transport = True
+
+    high_goal_pos = (
+        PICK_PLACE_GOAL_POS[0],
+        PICK_PLACE_GOAL_POS[1],
+        PICK_PLACE_GOAL_POS[2] + 0.06,
+    )
+    low_goal_pos = (
+        PICK_PLACE_GOAL_POS[0],
+        PICK_PLACE_GOAL_POS[1],
+        PICK_PLACE_GOAL_POS[2] + 0.02,
+    )
+
+    env.set_manual_configuration(
+        gripper_xyz=high_goal_pos,
+        finger_positions=(0.048, 0.048),
+        object_position=high_goal_pos,
+    )
+    high_status = env._build_task_status(env._get_true_contact_bits())
+    high_potential = env._compute_potential_terms(env._get_true_contact_bits(), high_status)
+
+    env.set_manual_configuration(
+        gripper_xyz=low_goal_pos,
+        finger_positions=(0.048, 0.048),
+        object_position=low_goal_pos,
+    )
+    low_status = env._build_task_status(env._get_true_contact_bits())
+    low_potential = env._compute_potential_terms(env._get_true_contact_bits(), low_status)
+
+    assert high_status.is_grasped
+    assert low_status.is_grasped
+    assert high_status.is_over_goal
+    assert low_status.is_over_goal
+    assert not high_status.is_placed
+    assert not low_status.is_placed
+    assert low_potential.place > high_potential.place
+    assert (
+        low_potential.lift + low_potential.transport + low_potential.place
+        > high_potential.lift + high_potential.transport + high_potential.place
+    )
+    env.close()
+
+
+def test_action_delta_penalty_discourages_jitter() -> None:
+    env = create_pick_place_env()
+    env.reset(seed=0)
+    bits = env._get_true_contact_bits()
+    status = env._build_task_status(bits)
+    potential = env._compute_potential_terms(bits, status)
+    previous_action = -np.ones(env.action_space.shape[0], dtype=np.float32)
+    action = np.ones(env.action_space.shape[0], dtype=np.float32)
+
+    reward_terms = env._compute_reward_terms(
+        action,
+        potential,
+        potential,
+        success=False,
+        task_status=status,
+        previous_action=previous_action,
+    )
+
+    assert reward_terms.action_delta_penalty > 0.0
+    assert reward_terms.total < 0.0
     env.close()
 
 

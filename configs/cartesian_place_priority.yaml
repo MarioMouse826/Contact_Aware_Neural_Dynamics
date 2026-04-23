@@ -1,9 +1,9 @@
 env:
   embodiment: cartesian_gripper
   task: pick_place_ab
-  max_episode_steps: 200
+  max_episode_steps: 250
   substeps: 10
-  action_scale_xyz: 0.015
+  action_scale_xyz: 0.02
   action_scale_grip: 0.01
   table_height: 0.05
   success_height_over_table: 0.08
@@ -32,13 +32,13 @@ env:
 reward:
   reach_weight: 1.0
   contact_weight: 0.25
-  grasp_alignment_weight: 0.0
-  start_stability_weight: 0.0
-  lift_weight: 5.0
-  transport_weight: 4.0
-  place_weight: 3.0
-  release_weight: 1.0
-  settle_weight: 2.0
+  grasp_alignment_weight: 0.5
+  start_stability_weight: 2.0
+  lift_weight: 8.0
+  transport_weight: 3.0
+  place_weight: 4.0
+  release_weight: 2.0
+  settle_weight: 3.0
   hold_weight: 2.0
   success_bonus: 10.0
   action_penalty_weight: 0.02

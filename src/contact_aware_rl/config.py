@@ -38,6 +38,7 @@ class EnvConfig:
     pick_place_rest_height_tolerance: float = 0.012
     pick_place_transport_clearance: float = 0.04
     pick_place_settle_speed_threshold: float = 0.05
+    grasp_alignment_threshold: float = 0.08
     pick_place_goal_hold_steps: int = 10
     initial_gripper_height: float = 0.16
     initial_finger_position: float = 0.0
@@ -49,7 +50,7 @@ class EnvConfig:
     )
     object_mass: float = 0.03
     object_friction: list[float] = field(default_factory=lambda: [1.2, 0.05, 0.01])
-    finger_friction: list[float] = field(default_factory=lambda: [2.5, 0.1, 0.02])
+    finger_friction: list[float] = field(default_factory=lambda: [1.8, 0.08, 0.015])
 
 
 @dataclass
@@ -66,6 +67,9 @@ class RewardConfig:
     hold_weight: float = 2.0
     success_bonus: float = 10.0
     action_penalty_weight: float = 0.01
+    action_delta_penalty_weight: float = 0.02
+    lift_instability_penalty_weight: float = 0.5
+    lift_instability_speed_threshold: float = 0.12
 
 
 @dataclass

@@ -266,11 +266,16 @@ def record_policy_video(args: argparse.Namespace) -> dict[str, Any]:
                 {
                     "episode": episode_index,
                     "seed": base_seed + episode_index,
+                    "task": info.get("task"),
                     "return": episode_return,
                     "steps": steps,
                     "success": bool(info.get("is_success", 0.0) >= 0.5),
                     "termination_reason": info.get("termination_reason"),
                     "max_lift_height": float(info.get("max_lift_height", 0.0)),
+                    "goal_distance_xy": float(info.get("goal_distance_xy", 0.0)),
+                    "is_placed": bool(info.get("is_placed", 0.0) >= 0.5),
+                    "is_released": bool(info.get("is_released", 0.0) >= 0.5),
+                    "is_settled": bool(info.get("is_settled", 0.0) >= 0.5),
                     "contact_stability": float(info.get("contact_stability", 0.0)),
                 }
             )

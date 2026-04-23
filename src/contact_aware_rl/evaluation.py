@@ -31,6 +31,11 @@ class EvaluationSummary:
     mean_episode_length: float
     mean_contact_stability: float
     mean_max_lift_height: float
+    mean_goal_distance_xy: float
+    mean_best_goal_distance_xy: float
+    placement_rate: float
+    release_rate: float
+    settle_rate: float
     termination_reason_counts: dict[str, int]
     episodes: list[dict[str, Any]]
 
@@ -83,20 +88,33 @@ def summarize_episodes(
         num_timesteps=num_timesteps,
         num_episodes=len(episodes),
         mean_reward=mean(float(episode["reward"]) for episode in episodes),
-        success_rate=mean(float(episode["is_success"]) for episode in episodes),
+        success_rate=mean(float(episode.get("is_success", 0.0)) for episode in episodes),
         near_success_rate=mean(
-            float(int(episode["best_success_streak"] >= near_success_threshold))
+            float(int(int(episode.get("best_success_streak", 0)) >= near_success_threshold))
             for episode in episodes
         ),
-        threshold_cross_rate=mean(float(episode["threshold_crossed"]) for episode in episodes),
+        threshold_cross_rate=mean(
+            float(episode.get("threshold_crossed", 0.0)) for episode in episodes
+        ),
         mean_best_success_streak=mean(
-            float(episode["best_success_streak"]) for episode in episodes
+            float(episode.get("best_success_streak", 0.0)) for episode in episodes
         ),
-        mean_episode_length=mean(float(episode["length"]) for episode in episodes),
+        mean_episode_length=mean(float(episode.get("length", 0.0)) for episode in episodes),
         mean_contact_stability=mean(
-            float(episode["contact_stability"]) for episode in episodes
+            float(episode.get("contact_stability", 0.0)) for episode in episodes
         ),
-        mean_max_lift_height=mean(float(episode["max_lift_height"]) for episode in episodes),
+        mean_max_lift_height=mean(
+            float(episode.get("max_lift_height", 0.0)) for episode in episodes
+        ),
+        mean_goal_distance_xy=mean(
+            float(episode.get("goal_distance_xy", 0.0)) for episode in episodes
+        ),
+        mean_best_goal_distance_xy=mean(
+            float(episode.get("best_goal_distance_xy", 0.0)) for episode in episodes
+        ),
+        placement_rate=mean(float(episode.get("is_placed", 0.0)) for episode in episodes),
+        release_rate=mean(float(episode.get("is_released", 0.0)) for episode in episodes),
+        settle_rate=mean(float(episode.get("is_settled", 0.0)) for episode in episodes),
         termination_reason_counts=dict(sorted(termination_counts.items())),
         episodes=episodes,
     )
@@ -114,7 +132,9 @@ def evaluate_policy(
 ) -> EvaluationSummary:
     episodes: list[dict[str, Any]] = []
     near_success_threshold = 1
-    if hasattr(env, "env_config"):
+    if hasattr(env, "success_hold_steps"):
+        near_success_threshold = max(1, math.ceil(int(env.success_hold_steps) / 2))
+    elif hasattr(env, "env_config"):
         near_success_threshold = max(1, math.ceil(env.env_config.success_hold_steps / 2))
 
     for episode_index in range(n_episodes):
@@ -145,6 +165,11 @@ def evaluate_policy(
                 ),
                 "contact_stability": float(final_info.get("contact_stability", 0.0)),
                 "max_lift_height": float(final_info.get("max_lift_height", 0.0)),
+                "goal_distance_xy": float(final_info.get("goal_distance_xy", 0.0)),
+                "best_goal_distance_xy": float(final_info.get("best_goal_distance_xy", 0.0)),
+                "is_placed": float(final_info.get("is_placed", 0.0)),
+                "is_released": float(final_info.get("is_released", 0.0)),
+                "is_settled": float(final_info.get("is_settled", 0.0)),
                 "termination_reason": final_info.get("termination_reason", "unknown"),
             }
         )

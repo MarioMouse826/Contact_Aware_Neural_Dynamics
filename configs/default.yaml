@@ -1,5 +1,6 @@
 env:
   embodiment: cartesian_gripper
+  task: pick_place_ab
   max_episode_steps: 200
   substeps: 10
   action_scale_xyz: 0.015
@@ -12,6 +13,14 @@ env:
   reset_object_yaw_range: 0.5235987755982988
   reset_gripper_xy_noise: 0.025
   reset_gripper_z_noise: 0.01
+  pick_place_start_xy: [-0.12, -0.12]
+  pick_place_goal_xy: [0.12, 0.12]
+  pick_place_object_yaw: 0.0
+  pick_place_goal_tolerance_xy: 0.03
+  pick_place_rest_height_tolerance: 0.012
+  pick_place_transport_clearance: 0.04
+  pick_place_settle_speed_threshold: 0.05
+  pick_place_goal_hold_steps: 10
   initial_gripper_height: 0.16
   initial_finger_position: 0.0
   object_half_extents: [0.025, 0.025, 0.03]
@@ -23,6 +32,10 @@ reward:
   reach_weight: 1.0
   contact_weight: 0.25
   lift_weight: 5.0
+  transport_weight: 4.0
+  place_weight: 3.0
+  release_weight: 1.0
+  settle_weight: 2.0
   hold_weight: 2.0
   success_bonus: 10.0
   action_penalty_weight: 0.01

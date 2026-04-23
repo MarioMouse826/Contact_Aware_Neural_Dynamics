@@ -1,4 +1,4 @@
-"""Contact-aware SAC experiments for grasp-and-lift in MuJoCo."""
+"""Contact-aware SAC experiments for tabletop manipulation in MuJoCo."""
 
 from .config import ExperimentConfig, load_experiment_config
 from .experiment import evaluate_checkpoint, run_training

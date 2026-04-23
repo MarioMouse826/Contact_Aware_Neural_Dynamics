@@ -1,4 +1,5 @@
 env:
+  task: pick_place_ab
   max_episode_steps: 50
 
 train:

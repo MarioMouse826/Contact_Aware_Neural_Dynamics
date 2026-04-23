@@ -12,6 +12,7 @@ import yaml
 @dataclass
 class EnvConfig:
     embodiment: str = "cartesian_gripper"
+    task: str = "pick_place_ab"
     observation_mode: str = "contact"
     contact_override: str | None = None
     max_episode_steps: int = 200
@@ -30,6 +31,14 @@ class EnvConfig:
     reset_gripper_xy_noise: float = 0.025
     reset_gripper_z_noise: float = 0.01
     reset_arm_joint_noise: float = 0.05
+    pick_place_start_xy: list[float] = field(default_factory=lambda: [-0.12, -0.12])
+    pick_place_goal_xy: list[float] = field(default_factory=lambda: [0.12, 0.12])
+    pick_place_object_yaw: float = 0.0
+    pick_place_goal_tolerance_xy: float = 0.03
+    pick_place_rest_height_tolerance: float = 0.012
+    pick_place_transport_clearance: float = 0.04
+    pick_place_settle_speed_threshold: float = 0.05
+    pick_place_goal_hold_steps: int = 10
     initial_gripper_height: float = 0.16
     initial_finger_position: float = 0.0
     initial_arm_joint_positions: list[float] = field(
@@ -48,6 +57,10 @@ class RewardConfig:
     reach_weight: float = 1.0
     contact_weight: float = 0.25
     lift_weight: float = 5.0
+    transport_weight: float = 4.0
+    place_weight: float = 3.0
+    release_weight: float = 1.0
+    settle_weight: float = 2.0
     hold_weight: float = 2.0
     success_bonus: float = 10.0
     action_penalty_weight: float = 0.01

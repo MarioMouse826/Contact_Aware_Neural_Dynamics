@@ -13,7 +13,9 @@ from .modes import TRAINABLE_MODES
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Train SAC on the grasp-and-lift task.")
+    parser = argparse.ArgumentParser(
+        description="Train SAC on the configured manipulation task."
+    )
     parser.add_argument("--mode", choices=sorted(TRAINABLE_MODES), required=True)
     parser.add_argument(
         "--config",

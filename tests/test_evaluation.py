@@ -40,6 +40,11 @@ def test_summarize_episodes_reports_streak_and_termination_metrics() -> None:
                 "steps_above_success_height": 10,
                 "contact_stability": 0.8,
                 "max_lift_height": 0.11,
+                "goal_distance_xy": 0.01,
+                "best_goal_distance_xy": 0.01,
+                "is_placed": 1.0,
+                "is_released": 1.0,
+                "is_settled": 1.0,
                 "termination_reason": "success",
             },
             {
@@ -51,6 +56,11 @@ def test_summarize_episodes_reports_streak_and_termination_metrics() -> None:
                 "steps_above_success_height": 8,
                 "contact_stability": 0.6,
                 "max_lift_height": 0.09,
+                "goal_distance_xy": 0.03,
+                "best_goal_distance_xy": 0.02,
+                "is_placed": 1.0,
+                "is_released": 0.0,
+                "is_settled": 0.0,
                 "termination_reason": "time_limit",
             },
             {
@@ -62,6 +72,11 @@ def test_summarize_episodes_reports_streak_and_termination_metrics() -> None:
                 "steps_above_success_height": 0,
                 "contact_stability": 0.1,
                 "max_lift_height": 0.03,
+                "goal_distance_xy": 0.20,
+                "best_goal_distance_xy": 0.12,
+                "is_placed": 0.0,
+                "is_released": 0.0,
+                "is_settled": 0.0,
                 "termination_reason": "dropped",
             },
         ],
@@ -75,6 +90,10 @@ def test_summarize_episodes_reports_streak_and_termination_metrics() -> None:
     assert summary.near_success_rate == pytest.approx(2.0 / 3.0)
     assert summary.threshold_cross_rate == pytest.approx(2.0 / 3.0)
     assert summary.mean_best_success_streak == pytest.approx(5.0)
+    assert summary.mean_goal_distance_xy == pytest.approx((0.01 + 0.03 + 0.20) / 3.0)
+    assert summary.placement_rate == pytest.approx(2.0 / 3.0)
+    assert summary.release_rate == pytest.approx(1.0 / 3.0)
+    assert summary.settle_rate == pytest.approx(1.0 / 3.0)
     assert summary.termination_reason_counts == {
         "dropped": 1,
         "success": 1,

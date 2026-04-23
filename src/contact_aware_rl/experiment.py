@@ -38,6 +38,24 @@ from .modes import (
 MAX_PARALLEL_WORKERS = 12
 
 
+def _config_type_tag(env_config: EnvConfig) -> str:
+    config_type_by_embodiment = {
+        "cartesian_gripper": "cartesian",
+        "arm_pinch": "arm",
+    }
+    return config_type_by_embodiment.get(env_config.embodiment, env_config.embodiment)
+
+
+def _build_wandb_tags(config: ExperimentConfig, *, mode: str) -> list[str]:
+    return [
+        mode,
+        f"task:{config.env.task}",
+        f"config:{_config_type_tag(config.env)}",
+        f"seed:{config.train.seed}",
+        f"envs:{config.train.num_envs}",
+    ]
+
+
 @dataclass
 class TrainingArtifacts:
     run_id: str
@@ -69,6 +87,11 @@ def _build_monitored_env(
             "best_success_streak",
             "threshold_crossed",
             "steps_above_success_height",
+            "goal_distance_xy",
+            "best_goal_distance_xy",
+            "is_placed",
+            "is_released",
+            "is_settled",
         ),
     )
 
@@ -179,7 +202,7 @@ def run_training(
         config=run_config.to_dict(),
         logging_config=run_config.logging,
         job_type="train",
-        tags=[mode, f"seed:{run_config.train.seed}", f"envs:{run_config.train.num_envs}"],
+        tags=_build_wandb_tags(run_config, mode=mode),
     )
 
     training_env = None

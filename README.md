@@ -1,6 +1,8 @@
 # Contact-Aware Neural Dynamics
 
-This repository contains a fresh implementation of the final project experiments for contact-aware reinforcement learning. The code uses custom MuJoCo grasp-and-lift environments and compares SAC with and without binary finger contact observations, following the motivation from `Contact-Aware Neural Dynamics.pdf` and the experiment design in `proposal.md`.
+This repository contains a fresh implementation of the final project experiments for contact-aware reinforcement learning. The code uses custom MuJoCo manipulation environments and compares SAC with and without binary finger contact observations, following the motivation from `Contact-Aware Neural Dynamics.pdf` and the experiment design in `proposal.md`.
+
+The default Cartesian task is now an explicit tabletop pick-and-place objective: start with the cube at point A, grasp it, move it to point B, place it back on the table, release it, and let it settle. The legacy grasp-and-lift task remains available through a separate config.
 
 ## Experiments
 
@@ -11,8 +13,8 @@ This repository contains a fresh implementation of the final project experiments
 
 ## Embodiments
 
-- `cartesian_gripper`: the original slide-joint tabletop gripper. This remains the default in `configs/default.yaml`.
-- `arm_pinch`: a fixed-base articulated arm with four revolute arm joints and a two-finger pinch hand. Use `configs/arm_box.yaml` for this task.
+- `cartesian_gripper`: the original slide-joint tabletop gripper. `configs/default.yaml` runs the new `pick_place_ab` task by default. Use `configs/cartesian_grasp_lift.yaml` for the legacy lift-only task.
+- `arm_pinch`: a fixed-base articulated arm with four revolute arm joints and a two-finger pinch hand. `configs/arm_box.yaml` now also runs the `pick_place_ab` task. Use `configs/arm_grasp_lift.yaml` for the legacy lift-only task.
 
 The articulated arm supports `baseline`, `contact`, and `contact_ablation`. It does not support `always_contact`.
 
@@ -35,10 +37,22 @@ uv sync
 python -m contact_aware_rl.train --mode contact --seed 0 --num-envs 1
 ```
 
-For the articulated arm task:
+For the legacy Cartesian lift-only task:
+
+```bash
+python -m contact_aware_rl.train --config configs/cartesian_grasp_lift.yaml --mode contact --seed 0 --num-envs 1
+```
+
+For the articulated arm pick-and-place task:
 
 ```bash
 python -m contact_aware_rl.train --config configs/arm_box.yaml --mode contact --seed 0 --num-envs 1
+```
+
+For the legacy articulated arm lift-only task:
+
+```bash
+python -m contact_aware_rl.train --config configs/arm_grasp_lift.yaml --mode contact --seed 0 --num-envs 1
 ```
 
 ## Evaluate

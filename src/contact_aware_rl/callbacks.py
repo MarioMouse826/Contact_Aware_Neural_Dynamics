@@ -105,6 +105,13 @@ class PeriodicEvalCallback(BaseCallback):
             f"{prefix}/mean_contact_stability", summary.mean_contact_stability
         )
         self.logger.record(f"{prefix}/mean_max_lift_height", summary.mean_max_lift_height)
+        self.logger.record(f"{prefix}/mean_goal_distance_xy", summary.mean_goal_distance_xy)
+        self.logger.record(
+            f"{prefix}/mean_best_goal_distance_xy", summary.mean_best_goal_distance_xy
+        )
+        self.logger.record(f"{prefix}/placement_rate", summary.placement_rate)
+        self.logger.record(f"{prefix}/release_rate", summary.release_rate)
+        self.logger.record(f"{prefix}/settle_rate", summary.settle_rate)
         self.logger.record(f"{prefix}/num_episodes", summary.num_episodes)
         for reason, count in summary.termination_reason_counts.items():
             self.logger.record(f"{prefix}/termination_{reason}", float(count))

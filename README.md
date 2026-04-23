@@ -62,7 +62,7 @@ python -m contact_aware_rl.train --config configs/arm_grasp_lift.yaml --mode con
 ## Evaluate
 
 ```bash
-python -m contact_aware_rl.evaluate --checkpoint outputs/<run-id>/best_success_model.zip --mode contact --split validation
+python -m contact_aware_rl.evaluate --checkpoint outputs/<run-id>/best_model.zip --mode contact --split validation
 ```
 
 For the proposal ablation:
@@ -80,10 +80,10 @@ python -m contact_aware_rl.sweep --suite proposal --seeds 0 1 2 --num-envs 1
 ## Record A Video
 
 ```bash
-python watch_ai.py --model-path outputs/<run-id>/best_success_model.zip --split validation
+python watch_ai.py --model-path outputs/<run-id>/best_model.zip --split validation
 ```
 
-This writes an MP4 to `videos/<run-id>.mp4` and records the split/base seed in the output JSON. If a run never reaches nonzero validation success, it will not emit `best_success_model.zip`.
+This writes an MP4 to `videos/<run-id>.mp4` and records the split/base seed in the output JSON. Every run emits `best_model.zip`; `best_success_model.zip` is still only written after nonzero validation success.
 
 ## Tests
 

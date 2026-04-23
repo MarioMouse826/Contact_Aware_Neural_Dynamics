@@ -21,6 +21,8 @@ SUPPORTED_CONTACT_OVERRIDES = {None, "ones", "zeros"}
 class PotentialTerms:
     reach: float = 0.0
     contact: float = 0.0
+    grasp_alignment: float = 0.0
+    start_stability: float = 0.0
     lift: float = 0.0
     transport: float = 0.0
     place: float = 0.0
@@ -33,6 +35,8 @@ class PotentialTerms:
         return (
             self.reach
             + self.contact
+            + self.grasp_alignment
+            + self.start_stability
             + self.lift
             + self.transport
             + self.place
@@ -44,12 +48,14 @@ class PotentialTerms:
 
 @dataclass(frozen=True)
 class TaskStatus:
+    has_any_contact: bool = False
     has_dual_contact: bool = False
     lift_clearance: float = 0.0
     goal_distance_xy: float = 0.0
     goal_height_error: float = 0.0
     object_speed: float = 0.0
     is_grasped: bool = False
+    is_lifted_grasp: bool = False
     is_over_goal: bool = False
     is_placed: bool = False
     is_released: bool = False
@@ -60,6 +66,8 @@ class TaskStatus:
 class RewardTerms:
     reach: float = 0.0
     contact: float = 0.0
+    grasp_alignment: float = 0.0
+    start_stability: float = 0.0
     lift: float = 0.0
     transport: float = 0.0
     place: float = 0.0
@@ -76,6 +84,8 @@ class RewardTerms:
         return (
             self.reach
             + self.contact
+            + self.grasp_alignment
+            + self.start_stability
             + self.lift
             + self.transport
             + self.place
@@ -151,6 +161,13 @@ def validate_env_config(env_config: EnvConfig) -> None:
                 "Pick-and-place start/goal coordinates must stay within the Cartesian gripper "
                 "workspace bounds of +/-0.16 m."
             )
+    if env_config.embodiment == "cartesian_gripper":
+        for axis_value in env_config.pick_place_start_xy:
+            if abs(float(axis_value)) + float(env_config.reset_object_xy_range) > cartesian_limit:
+                raise ValueError(
+                    "Pick-and-place start reset range must stay within the Cartesian gripper "
+                    "workspace bounds of +/-0.16 m."
+                )
 
 
 class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
@@ -271,13 +288,15 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         )
 
         self._episode_steps = 0
-        self._episode_both_contact_steps = 0
+        self._episode_any_contact_steps = 0
+        self._episode_dual_contact_steps = 0
         self._episode_max_height = 0.0
         self._success_streak = 0
         self._episode_threshold_steps = 0
         self._episode_best_success_streak = 0
         self._episode_min_goal_distance_xy = float("inf")
         self._episode_has_grasped = False
+        self._episode_has_lifted_grasp = False
         self._episode_has_lifted_for_transport = False
         self._episode_has_placed = False
         self._episode_has_released = False
@@ -405,6 +424,22 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         right = self.data.site_xpos[self._right_tip_site_id].copy()
         return left, right
 
+    def _compute_contact_progress(self, true_contact_bits: np.ndarray) -> float:
+        any_contact = float(np.any(true_contact_bits > 0.5))
+        dual_contact = float(np.all(true_contact_bits > 0.5))
+        return 0.5 * any_contact + 0.5 * dual_contact
+
+    def _compute_grasp_alignment_progress(self, object_pos: np.ndarray) -> float:
+        left_tip, right_tip = self._get_fingertip_positions()
+        gripper_center = 0.5 * (left_tip + right_tip)
+        midpoint_distance = float(np.linalg.norm(gripper_center - object_pos))
+        left_distance = float(np.linalg.norm(left_tip - object_pos))
+        right_distance = float(np.linalg.norm(right_tip - object_pos))
+        symmetry_error = abs(left_distance - right_distance)
+        return float(
+            math.exp(-10.0 * midpoint_distance) * math.exp(-40.0 * symmetry_error)
+        )
+
     def _get_observation(self, true_contact_bits: np.ndarray | None = None) -> np.ndarray:
         true_contact_bits = (
             self._get_true_contact_bits() if true_contact_bits is None else true_contact_bits
@@ -436,20 +471,27 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         return np.concatenate(obs_parts).astype(np.float32)
 
     def _compute_contact_potential(self, true_contact_bits: np.ndarray) -> float:
-        return self.reward_config.contact_weight * float(np.all(true_contact_bits > 0.5))
+        return self.reward_config.contact_weight * self._compute_contact_progress(
+            true_contact_bits
+        )
 
     def _build_task_status(self, true_contact_bits: np.ndarray) -> TaskStatus:
         object_pos, _ = self._get_object_state()
+        any_contact = bool(np.any(true_contact_bits > 0.5))
         dual_contact = bool(np.all(true_contact_bits > 0.5))
         lift_clearance = max(0.0, float(object_pos[2] - self._rest_height))
         object_speed = float(np.linalg.norm(self._get_object_linear_velocity()))
+        is_grasped = dual_contact
+        is_lifted_grasp = is_grasped and lift_clearance >= self._grasp_clearance
 
         if self.env_config.task != "pick_place_ab":
             return TaskStatus(
+                has_any_contact=any_contact,
                 has_dual_contact=dual_contact,
                 lift_clearance=lift_clearance,
                 object_speed=object_speed,
-                is_grasped=dual_contact and lift_clearance >= self._grasp_clearance,
+                is_grasped=is_grasped,
+                is_lifted_grasp=is_lifted_grasp,
             )
 
         goal_distance_xy = float(
@@ -461,18 +503,20 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
             is_over_goal
             and goal_height_error <= self.env_config.pick_place_rest_height_tolerance
         )
-        is_released = is_placed and not dual_contact
+        is_released = is_placed and not any_contact
         is_settled = (
             is_released
             and object_speed <= self.env_config.pick_place_settle_speed_threshold
         )
         return TaskStatus(
+            has_any_contact=any_contact,
             has_dual_contact=dual_contact,
             lift_clearance=lift_clearance,
             goal_distance_xy=goal_distance_xy,
             goal_height_error=goal_height_error,
             object_speed=object_speed,
-            is_grasped=dual_contact and lift_clearance >= self._grasp_clearance,
+            is_grasped=is_grasped,
+            is_lifted_grasp=is_lifted_grasp,
             is_over_goal=is_over_goal,
             is_placed=is_placed,
             is_released=is_released,
@@ -495,6 +539,11 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
                 1.0,
             )
         )
+        grasp_alignment = (
+            self.reward_config.grasp_alignment_weight
+            * self._compute_grasp_alignment_progress(object_pos)
+            * (1.0 - lift_progress)
+        )
         lift = self.reward_config.lift_weight * lift_progress
         hold_progress = float(
             np.clip(
@@ -504,7 +553,13 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
             )
         )
         hold = self.reward_config.hold_weight * hold_progress
-        return PotentialTerms(reach=reach, contact=contact, lift=lift, hold=hold)
+        return PotentialTerms(
+            reach=reach,
+            contact=contact,
+            grasp_alignment=grasp_alignment,
+            lift=lift,
+            hold=hold,
+        )
 
     def _compute_pick_place_potential_terms(
         self,
@@ -517,10 +572,9 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         reach_distance = float(np.linalg.norm(gripper_center - object_pos))
         reach = self.reward_config.reach_weight * math.exp(-10.0 * reach_distance)
         contact = self._compute_contact_potential(true_contact_bits)
-
-        lift_progress = 0.0
-        if task_status.has_dual_contact or self._episode_has_grasped:
-            lift_progress = float(
+        transport_readiness = 0.0
+        if task_status.is_grasped or self._episode_has_grasped:
+            transport_readiness = float(
                 np.clip(
                     task_status.lift_clearance
                     / max(1e-6, self.env_config.pick_place_transport_clearance),
@@ -528,15 +582,36 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
                     1.0,
                 )
             )
+
+        grasp_alignment_progress = self._compute_grasp_alignment_progress(object_pos)
+        grasp_alignment = (
+            self.reward_config.grasp_alignment_weight
+            * grasp_alignment_progress
+            * (1.0 - transport_readiness)
+        )
+
+        start_distance_xy = float(
+            np.linalg.norm(object_pos[:2] - self._pick_place_start_position[:2])
+        )
+        start_displacement_progress = float(
+            np.clip(start_distance_xy / self._pick_place_goal_span, 0.0, 1.0)
+        )
+        start_stability = 0.0
+        if not (task_status.is_lifted_grasp or self._episode_has_lifted_grasp):
+            start_stability = (
+                -self.reward_config.start_stability_weight * start_displacement_progress
+            )
+
+        lift_progress = 0.0
+        if task_status.is_grasped or self._episode_has_grasped:
+            lift_progress = transport_readiness
         lift = self.reward_config.lift_weight * lift_progress
 
         transport_progress = 0.0
-        if (
-            self._episode_has_grasped
-            and task_status.lift_clearance >= self.env_config.pick_place_transport_clearance
-        ):
+        if task_status.is_grasped or self._episode_has_grasped:
             transport_progress = float(
-                np.clip(
+                transport_readiness
+                * np.clip(
                     1.0 - (task_status.goal_distance_xy / self._pick_place_goal_span),
                     0.0,
                     1.0,
@@ -545,9 +620,13 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         transport = self.reward_config.transport_weight * transport_progress
 
         place_progress = 0.0
-        if self._episode_has_lifted_for_transport and task_status.is_over_goal:
+        if (
+            (task_status.is_grasped or self._episode_has_grasped)
+            and task_status.is_over_goal
+        ):
             place_progress = float(
-                np.clip(
+                transport_readiness
+                * np.clip(
                     1.0
                     - (
                         task_status.goal_height_error
@@ -561,7 +640,7 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
 
         release_progress = 0.0
         if self._episode_has_lifted_for_transport and task_status.is_placed:
-            release_progress = 1.0 if not task_status.has_dual_contact else 0.0
+            release_progress = 1.0 if not task_status.has_any_contact else 0.0
         release = self.reward_config.release_weight * release_progress
 
         settle_progress = 0.0
@@ -579,6 +658,8 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         return PotentialTerms(
             reach=reach,
             contact=contact,
+            grasp_alignment=grasp_alignment,
+            start_stability=start_stability,
             lift=lift,
             transport=transport,
             place=place,
@@ -611,6 +692,12 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         return RewardTerms(
             reach=current_potential.reach - previous_potential.reach,
             contact=current_potential.contact - previous_potential.contact,
+            grasp_alignment=(
+                current_potential.grasp_alignment - previous_potential.grasp_alignment
+            ),
+            start_stability=(
+                current_potential.start_stability - previous_potential.start_stability
+            ),
             lift=current_potential.lift - previous_potential.lift,
             transport=current_potential.transport - previous_potential.transport,
             place=current_potential.place - previous_potential.place,
@@ -631,8 +718,10 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
     ) -> None:
         object_height = float(object_pos[2] - self.env_config.table_height)
         self._episode_max_height = max(self._episode_max_height, object_height)
+        if task_status.has_any_contact:
+            self._episode_any_contact_steps += 1
         if task_status.has_dual_contact:
-            self._episode_both_contact_steps += 1
+            self._episode_dual_contact_steps += 1
 
         if self.env_config.task == "grasp_lift":
             if object_pos[2] >= self._success_height:
@@ -652,6 +741,8 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         )
         if task_status.is_grasped:
             self._episode_has_grasped = True
+        if task_status.is_lifted_grasp:
+            self._episode_has_lifted_grasp = True
         if (
             self._episode_has_grasped
             and task_status.lift_clearance >= self.env_config.pick_place_transport_clearance
@@ -697,7 +788,10 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
             "task": self.env_config.task,
             "is_success": float(success),
             "contact_stability": float(
-                self._episode_both_contact_steps / max(1, self._episode_steps)
+                self._episode_any_contact_steps / max(1, self._episode_steps)
+            ),
+            "dual_contact_stability": float(
+                self._episode_dual_contact_steps / max(1, self._episode_steps)
             ),
             "max_lift_height": float(self._episode_max_height),
             "object_height": float(object_pos[2] - self.env_config.table_height),
@@ -714,17 +808,27 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
                 if math.isfinite(self._episode_min_goal_distance_xy)
                 else 0.0
             ),
+            "has_any_contact": float(task_status.has_any_contact),
+            "has_dual_contact": float(task_status.has_dual_contact),
             "is_grasped": float(task_status.is_grasped),
+            "is_lifted_grasp": float(task_status.is_lifted_grasp),
             "is_over_goal": float(task_status.is_over_goal),
             "is_placed": float(task_status.is_placed),
             "is_released": float(task_status.is_released),
             "is_settled": float(task_status.is_settled),
+            "episode_has_grasped": float(self._episode_has_grasped),
+            "episode_has_lifted_grasp": float(self._episode_has_lifted_grasp),
+            "episode_has_placed": float(self._episode_has_placed),
+            "episode_has_released": float(self._episode_has_released),
+            "episode_has_settled": float(self._episode_has_settled),
             "true_contact_left": float(true_contact_bits[0]),
             "true_contact_right": float(true_contact_bits[1]),
             "observed_contact_left": float(observed_contact_bits[0]),
             "observed_contact_right": float(observed_contact_bits[1]),
             "reward/reach_delta": reward_terms.reach,
             "reward/contact_delta": reward_terms.contact,
+            "reward/grasp_alignment_delta": reward_terms.grasp_alignment,
+            "reward/start_stability_delta": reward_terms.start_stability,
             "reward/lift_delta": reward_terms.lift,
             "reward/transport_delta": reward_terms.transport,
             "reward/place_delta": reward_terms.place,
@@ -736,6 +840,8 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
             "reward/total": reward_terms.total,
             "potential/reach": reward_terms.current_potential.reach,
             "potential/contact": reward_terms.current_potential.contact,
+            "potential/grasp_alignment": reward_terms.current_potential.grasp_alignment,
+            "potential/start_stability": reward_terms.current_potential.start_stability,
             "potential/lift": reward_terms.current_potential.lift,
             "potential/transport": reward_terms.current_potential.transport,
             "potential/place": reward_terms.current_potential.place,
@@ -756,7 +862,22 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
 
     def _sample_object_pose(self) -> tuple[np.ndarray, np.ndarray]:
         if self.env_config.task == "pick_place_ab":
-            return self._pick_place_start_position.copy(), self._pick_place_object_quat.copy()
+            object_xy_noise = self.env_config.reset_object_xy_range
+            object_position = self._pick_place_start_position.copy()
+            object_position[0] += float(
+                self.np_random.uniform(-object_xy_noise, object_xy_noise)
+            )
+            object_position[1] += float(
+                self.np_random.uniform(-object_xy_noise, object_xy_noise)
+            )
+            object_yaw = float(
+                self.env_config.pick_place_object_yaw
+                + self.np_random.uniform(
+                    -self.env_config.reset_object_yaw_range,
+                    self.env_config.reset_object_yaw_range,
+                )
+            )
+            return object_position, self._yaw_to_quat(object_yaw)
 
         object_xy_noise = self.env_config.reset_object_xy_range
         object_x = float(self.np_random.uniform(-object_xy_noise, object_xy_noise))
@@ -785,13 +906,15 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         self._reset_manipulator(object_position=object_position, object_quat=object_quat)
 
         self._episode_steps = 0
-        self._episode_both_contact_steps = 0
+        self._episode_any_contact_steps = 0
+        self._episode_dual_contact_steps = 0
         self._episode_max_height = float(object_position[2] - self.env_config.table_height)
         self._success_streak = 0
         self._episode_threshold_steps = 0
         self._episode_best_success_streak = 0
         self._episode_min_goal_distance_xy = float("inf")
         self._episode_has_grasped = False
+        self._episode_has_lifted_grasp = False
         self._episode_has_lifted_for_transport = False
         self._episode_has_placed = False
         self._episode_has_released = False
@@ -1264,9 +1387,6 @@ class ArmPinchGraspLiftEnv(BaseContactAwareEnv):
         self._target_ctrl = np.clip(self._target_ctrl + deltas, self._ctrl_low, self._ctrl_high)
         self.data.ctrl[:] = self._target_ctrl
 
-    def _compute_contact_potential(self, true_contact_bits: np.ndarray) -> float:
-        return 0.0
-
     def _reset_manipulator(
         self,
         *,
@@ -1277,7 +1397,7 @@ class ArmPinchGraspLiftEnv(BaseContactAwareEnv):
             self.env_config.initial_arm_joint_positions,
             dtype=np.float64,
         )
-        if self.env_config.task != "pick_place_ab":
+        if self.env_config.reset_arm_joint_noise > 0.0:
             arm_joint_positions = arm_joint_positions + self.np_random.uniform(
                 -self.env_config.reset_arm_joint_noise,
                 self.env_config.reset_arm_joint_noise,

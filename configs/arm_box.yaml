@@ -1,8 +1,17 @@
 env:
   embodiment: arm_pinch
   task: pick_place_ab
-  initial_arm_joint_positions: [-0.01, 0.46, -0.97, -1.68]
-  reset_arm_joint_noise: 0.04
+  initial_arm_joint_positions: [1.154, 0.8232, -1.2279, -1.5506]
+  reset_arm_joint_noise: 0.02
 
 reward:
-  contact_weight: 0.0
+  reach_weight: 1.5
+  contact_weight: 0.5
+  grasp_alignment_weight: 1.5
+  start_stability_weight: 1.0
+  lift_weight: 10.0
+  transport_weight: 6.0
+  place_weight: 4.0
+  release_weight: 2.0
+  settle_weight: 3.0
+  action_penalty_weight: 0.002

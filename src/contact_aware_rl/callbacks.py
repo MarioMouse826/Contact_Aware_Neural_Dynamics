@@ -104,11 +104,17 @@ class PeriodicEvalCallback(BaseCallback):
         self.logger.record(
             f"{prefix}/mean_contact_stability", summary.mean_contact_stability
         )
+        self.logger.record(
+            f"{prefix}/mean_dual_contact_stability",
+            summary.mean_dual_contact_stability,
+        )
         self.logger.record(f"{prefix}/mean_max_lift_height", summary.mean_max_lift_height)
         self.logger.record(f"{prefix}/mean_goal_distance_xy", summary.mean_goal_distance_xy)
         self.logger.record(
             f"{prefix}/mean_best_goal_distance_xy", summary.mean_best_goal_distance_xy
         )
+        self.logger.record(f"{prefix}/grasp_rate", summary.grasp_rate)
+        self.logger.record(f"{prefix}/lifted_grasp_rate", summary.lifted_grasp_rate)
         self.logger.record(f"{prefix}/placement_rate", summary.placement_rate)
         self.logger.record(f"{prefix}/release_rate", summary.release_rate)
         self.logger.record(f"{prefix}/settle_rate", summary.settle_rate)
@@ -218,7 +224,7 @@ class PeriodicEvalCallback(BaseCallback):
             )
             if self._is_better(monitor_summary, self.best_monitor_tuple):
                 self.best_monitor_tuple = self._priority(monitor_summary)
-                self._run_validation(trigger="monitor_improved")
+            self._run_validation(trigger="periodic")
 
         if (
             self.checkpoint_freq > 0

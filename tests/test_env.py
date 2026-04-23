@@ -37,6 +37,16 @@ ARM_SCRIPTED_LIFT_ACTION = np.array(
     [0.60013664, 0.96025074, 0.96087146, 0.95056844, 0.8994401],
     dtype=np.float32,
 )
+ARM_PICK_PLACE_START_CONTACT_POSE = np.array(
+    [1.1510553, 0.3717711, -1.40503214, -1.15755891],
+    dtype=np.float64,
+)
+ARM_PICK_PLACE_START_CONTACT_FINGERS = (0.02398491, 0.00579478)
+ARM_PICK_PLACE_GOAL_CONTACT_POSE = np.array(
+    [-0.35463111, 0.09097982, -0.59791054, -0.44003162],
+    dtype=np.float64,
+)
+ARM_PICK_PLACE_GOAL_CONTACT_FINGERS = (0.0206883, 0.00913122)
 
 
 def create_env(
@@ -83,7 +93,7 @@ def create_arm_pick_place_env(max_episode_steps: int = 200) -> ArmPinchGraspLift
     )
 
 
-def _pick_place_noop(env: ContactAwareGraspLiftEnv) -> np.ndarray:
+def _pick_place_noop(env: ContactAwareGraspLiftEnv | ArmPinchGraspLiftEnv) -> np.ndarray:
     return np.zeros(env.action_space.shape[0], dtype=np.float32)
 
 
@@ -101,6 +111,32 @@ def _prime_pick_place_transport(env: ContactAwareGraspLiftEnv) -> None:
     env.set_manual_configuration(
         gripper_xyz=(PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], lift_height),
         finger_positions=(0.048, 0.048),
+        object_position=(PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], lift_height),
+    )
+    env.step(noop)
+
+
+def _prime_arm_pick_place_transport(env: ArmPinchGraspLiftEnv) -> None:
+    noop = _pick_place_noop(env)
+    lift_height = PICK_PLACE_START_POS[2] + 0.06
+
+    env.set_manual_configuration(
+        arm_joint_positions=ARM_PICK_PLACE_START_CONTACT_POSE,
+        finger_positions=ARM_PICK_PLACE_START_CONTACT_FINGERS,
+        object_position=PICK_PLACE_START_POS,
+    )
+    env.step(noop)
+
+    env.set_manual_configuration(
+        arm_joint_positions=ARM_PICK_PLACE_START_CONTACT_POSE,
+        finger_positions=ARM_PICK_PLACE_START_CONTACT_FINGERS,
+        object_position=(PICK_PLACE_START_POS[0], PICK_PLACE_START_POS[1], lift_height),
+    )
+    env.step(noop)
+
+    env.set_manual_configuration(
+        arm_joint_positions=ARM_PICK_PLACE_GOAL_CONTACT_POSE,
+        finger_positions=ARM_PICK_PLACE_GOAL_CONTACT_FINGERS,
         object_position=(PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], lift_height),
     )
     env.step(noop)
@@ -183,30 +219,28 @@ def test_arm_contact_extraction_no_left_right_and_both() -> None:
 def test_pick_place_reset_uses_explicit_start_goal_and_home_pose() -> None:
     env = create_pick_place_env()
     observation, info = env.reset(seed=0)
-    object_pos, _ = env._get_object_state()
+    object_pos, object_quat = env._get_object_state()
     control_state, _ = env._get_control_state()
+    repeat_observation, _ = env.reset(seed=0)
+    repeat_object_pos, repeat_object_quat = env._get_object_state()
+    varied_observation, _ = env.reset(seed=1)
+    varied_object_pos, varied_object_quat = env._get_object_state()
 
-    assert np.allclose(object_pos, PICK_PLACE_START_POS)
+    assert np.allclose(object_pos, repeat_object_pos)
+    assert np.allclose(object_quat, repeat_object_quat)
+    assert np.allclose(observation, repeat_observation)
+    assert not np.allclose(object_pos[:2], varied_object_pos[:2])
+    assert not np.allclose(object_quat, varied_object_quat)
+    assert abs(object_pos[0] - PICK_PLACE_START_POS[0]) <= env.env_config.reset_object_xy_range
+    assert abs(object_pos[1] - PICK_PLACE_START_POS[1]) <= env.env_config.reset_object_xy_range
+    assert object_pos[2] == pytest.approx(PICK_PLACE_START_POS[2])
     assert np.allclose(control_state[:3], np.array([0.0, 0.0, 0.16], dtype=np.float64))
     assert observation.shape == (34,)
     assert np.allclose(observation[-8:-5], np.array(PICK_PLACE_GOAL_POS, dtype=np.float32))
-    assert np.allclose(
-        observation[-5:-2],
-        np.array(
-            [
-                PICK_PLACE_GOAL_POS[0] - PICK_PLACE_START_POS[0],
-                PICK_PLACE_GOAL_POS[1] - PICK_PLACE_START_POS[1],
-                0.0,
-            ],
-            dtype=np.float32,
-        ),
-    )
+    assert np.allclose(observation[-5:-2], np.array(PICK_PLACE_GOAL_POS, dtype=np.float32) - object_pos)
     assert info["task"] == "pick_place_ab"
     assert info["goal_distance_xy"] == pytest.approx(
-        np.linalg.norm(
-            np.array(PICK_PLACE_GOAL_POS[:2], dtype=np.float64)
-            - np.array(PICK_PLACE_START_POS[:2], dtype=np.float64)
-        )
+        np.linalg.norm(np.array(PICK_PLACE_GOAL_POS[:2], dtype=np.float64) - object_pos[:2])
     )
     env.close()
 
@@ -214,14 +248,25 @@ def test_pick_place_reset_uses_explicit_start_goal_and_home_pose() -> None:
 def test_arm_pick_place_reset_uses_explicit_start_goal_and_home_pose() -> None:
     env = create_arm_pick_place_env()
     observation, info = env.reset(seed=0)
-    object_pos, _ = env._get_object_state()
+    object_pos, object_quat = env._get_object_state()
     control_state, _ = env._get_control_state()
+    repeat_observation, _ = env.reset(seed=0)
+    repeat_object_pos, repeat_object_quat = env._get_object_state()
+    repeat_control_state, _ = env._get_control_state()
+    varied_observation, _ = env.reset(seed=1)
+    varied_object_pos, varied_object_quat = env._get_object_state()
+    varied_control_state, _ = env._get_control_state()
 
-    assert np.allclose(object_pos, PICK_PLACE_START_POS)
-    assert np.allclose(
-        control_state[:4],
-        np.asarray(env.env_config.initial_arm_joint_positions, dtype=np.float64),
-    )
+    assert np.allclose(object_pos, repeat_object_pos)
+    assert np.allclose(object_quat, repeat_object_quat)
+    assert np.allclose(control_state, repeat_control_state)
+    assert np.allclose(observation, repeat_observation)
+    assert not np.allclose(object_pos[:2], varied_object_pos[:2])
+    assert not np.allclose(object_quat, varied_object_quat)
+    assert not np.allclose(control_state[:4], varied_control_state[:4])
+    assert abs(object_pos[0] - PICK_PLACE_START_POS[0]) <= env.env_config.reset_object_xy_range
+    assert abs(object_pos[1] - PICK_PLACE_START_POS[1]) <= env.env_config.reset_object_xy_range
+    assert object_pos[2] == pytest.approx(PICK_PLACE_START_POS[2])
     assert np.allclose(control_state[4:], np.array([0.0, 0.0], dtype=np.float64))
     assert observation.shape == (36,)
     assert np.allclose(observation[-8:-5], np.array(PICK_PLACE_GOAL_POS, dtype=np.float32))
@@ -333,30 +378,131 @@ def test_cartesian_reward_potential_increases_with_two_finger_contact_and_lift()
     )
     lifted = env._compute_potential_terms(env._get_true_contact_bits())
 
-    assert single_contact.contact == no_contact.contact
+    assert single_contact.contact > no_contact.contact
     assert with_contact.contact > no_contact.contact
+    assert with_contact.contact > single_contact.contact
     assert lifted.lift > with_contact.lift
     env.close()
 
 
-def test_pick_place_transport_reward_is_gated_by_valid_lift() -> None:
+def test_pick_place_status_distinguishes_secure_grasp_from_lifted_grasp() -> None:
+    env = create_pick_place_env()
+    env.reset(seed=0)
+
+    env.set_manual_configuration(
+        gripper_xyz=PICK_PLACE_START_POS,
+        finger_positions=(0.048, 0.048),
+        object_position=PICK_PLACE_START_POS,
+    )
+    grasp_status = env._build_task_status(env._get_true_contact_bits())
+    assert grasp_status.is_grasped
+    assert not grasp_status.is_lifted_grasp
+
+    lift_height = PICK_PLACE_GOAL_POS[2] + 0.06
+    env.set_manual_configuration(
+        gripper_xyz=(PICK_PLACE_START_POS[0], PICK_PLACE_START_POS[1], lift_height),
+        finger_positions=(0.048, 0.048),
+        object_position=(PICK_PLACE_START_POS[0], PICK_PLACE_START_POS[1], lift_height),
+    )
+    lifted_status = env._build_task_status(env._get_true_contact_bits())
+    assert lifted_status.is_grasped
+    assert lifted_status.is_lifted_grasp
+    env.close()
+
+
+def test_pick_place_transport_reward_requires_secure_grasp() -> None:
     env = create_pick_place_env()
     env.reset(seed=0)
 
     lift_height = PICK_PLACE_GOAL_POS[2] + 0.06
     env.set_manual_configuration(
         gripper_xyz=(PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], lift_height),
-        finger_positions=(0.048, 0.048),
+        finger_positions=(0.0, 0.0),
         object_position=(PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], lift_height),
     )
-    hacked_status = env._build_task_status(env._get_true_contact_bits())
-    hacked_potential = env._compute_potential_terms(env._get_true_contact_bits(), hacked_status)
-    assert hacked_potential.transport == 0.0
+    no_grasp_status = env._build_task_status(env._get_true_contact_bits())
+    no_grasp_potential = env._compute_potential_terms(env._get_true_contact_bits(), no_grasp_status)
+    assert no_grasp_potential.transport == 0.0
 
-    env.step(_pick_place_noop(env))
+    env.reset(seed=0)
+    _prime_pick_place_transport(env)
     valid_status = env._build_task_status(env._get_true_contact_bits())
     valid_potential = env._compute_potential_terms(env._get_true_contact_bits(), valid_status)
     assert valid_potential.transport > 0.0
+    env.close()
+
+
+def test_arm_pick_place_penalizes_pregrasp_object_displacement() -> None:
+    env = ArmPinchGraspLiftEnv(
+        EnvConfig(
+            embodiment="arm_pinch",
+            task="pick_place_ab",
+            observation_mode="contact",
+            max_episode_steps=200,
+        ),
+        RewardConfig(
+            contact_weight=0.25,
+            grasp_alignment_weight=1.0,
+            start_stability_weight=1.0,
+        ),
+    )
+
+    env.set_manual_configuration(
+        arm_joint_positions=ARM_CONTACT_POSES["none"][0],
+        finger_positions=ARM_CONTACT_POSES["none"][1],
+        object_position=PICK_PLACE_START_POS,
+    )
+    start_potential = env._compute_potential_terms(env._get_true_contact_bits())
+
+    displaced_object_pos = (
+        PICK_PLACE_START_POS[0] - 0.08,
+        PICK_PLACE_START_POS[1] - 0.08,
+        PICK_PLACE_START_POS[2],
+    )
+    env.set_manual_configuration(
+        arm_joint_positions=ARM_CONTACT_POSES["none"][0],
+        finger_positions=ARM_CONTACT_POSES["none"][1],
+        object_position=displaced_object_pos,
+    )
+    displaced_potential = env._compute_potential_terms(env._get_true_contact_bits())
+    reward_terms = env._compute_reward_terms(
+        np.zeros(env.action_space.shape[0], dtype=np.float32),
+        start_potential,
+        displaced_potential,
+        success=False,
+    )
+
+    assert displaced_potential.start_stability < start_potential.start_stability
+    assert reward_terms.start_stability < 0.0
+    assert reward_terms.total < 0.0
+    env.close()
+
+
+def test_contact_stability_tracks_any_and_dual_contact_separately() -> None:
+    env = create_pick_place_env(max_episode_steps=10)
+    env.reset(seed=0)
+
+    env._episode_steps = 2
+    env._episode_any_contact_steps = 2
+    env._episode_dual_contact_steps = 1
+    bits = np.array([1.0, 1.0], dtype=np.float32)
+    status = env._build_task_status(bits)
+    reward_terms = env._compute_reward_terms(
+        np.zeros(env.action_space.shape[0], dtype=np.float32),
+        env._previous_potential,
+        env._previous_potential,
+        success=False,
+    )
+    info = env._build_info(
+        true_contact_bits=bits,
+        observed_contact_bits=bits,
+        task_status=status,
+        reward_terms=reward_terms,
+        success=False,
+    )
+
+    assert info["contact_stability"] == pytest.approx(1.0)
+    assert info["dual_contact_stability"] == pytest.approx(0.5)
     env.close()
 
 
@@ -406,8 +552,16 @@ def test_pick_place_release_and_settle_sequence_reaches_success() -> None:
     env.close()
 
 
-def test_arm_reward_uses_geometry_only_not_contact_bits() -> None:
-    env = create_env(embodiment="arm_pinch", task="grasp_lift")
+def test_arm_reward_uses_contact_and_alignment_shaping() -> None:
+    env = ArmPinchGraspLiftEnv(
+        EnvConfig(
+            embodiment="arm_pinch",
+            task="grasp_lift",
+            observation_mode="contact",
+            max_episode_steps=50,
+        ),
+        RewardConfig(contact_weight=0.25, grasp_alignment_weight=1.0),
+    )
 
     no_contact_arm, no_contact_fingers, _ = ARM_CONTACT_POSES["none"]
     both_contact_arm, both_contact_fingers, _ = ARM_CONTACT_POSES["both"]
@@ -433,8 +587,8 @@ def test_arm_reward_uses_geometry_only_not_contact_bits() -> None:
     )
     lifted = env._compute_potential_terms(env._get_true_contact_bits())
 
-    assert no_contact.contact == 0.0
-    assert with_contact.contact == 0.0
+    assert with_contact.contact > no_contact.contact
+    assert with_contact.grasp_alignment > no_contact.grasp_alignment
     assert lifted.lift > with_contact.lift
     env.close()
 
@@ -535,4 +689,50 @@ def test_scripted_arm_grasp_sequence_reaches_success() -> None:
             break
 
     assert success
+    env.close()
+
+
+def test_scripted_arm_pick_place_sequence_reaches_success() -> None:
+    env = ArmPinchGraspLiftEnv(
+        EnvConfig(
+            embodiment="arm_pinch",
+            task="pick_place_ab",
+            observation_mode="contact",
+            max_episode_steps=250,
+        ),
+        RewardConfig(),
+    )
+    env.reset(seed=0)
+    env.set_manual_configuration(
+        arm_joint_positions=ARM_PICK_PLACE_START_CONTACT_POSE,
+        finger_positions=ARM_PICK_PLACE_START_CONTACT_FINGERS,
+        object_position=PICK_PLACE_START_POS,
+    )
+    status = env._build_task_status(env._get_true_contact_bits())
+    assert status.is_grasped
+    env._update_success_tracking(object_pos=env._get_object_state()[0], task_status=status)
+
+    lift_height = PICK_PLACE_START_POS[2] + 0.06
+    env.set_manual_configuration(
+        arm_joint_positions=np.asarray(env.env_config.initial_arm_joint_positions, dtype=np.float64),
+        finger_positions=(0.0, 0.0),
+        object_position=(PICK_PLACE_START_POS[0], PICK_PLACE_START_POS[1], lift_height),
+    )
+    status = env._build_task_status(env._get_true_contact_bits())
+    env._update_success_tracking(object_pos=env._get_object_state()[0], task_status=status)
+    assert env._episode_has_lifted_for_transport
+
+    env.set_manual_configuration(
+        arm_joint_positions=np.asarray(env.env_config.initial_arm_joint_positions, dtype=np.float64),
+        finger_positions=(0.0, 0.0),
+        object_position=PICK_PLACE_GOAL_POS,
+    )
+    for _ in range(env.success_hold_steps):
+        status = env._build_task_status(env._get_true_contact_bits())
+        env._update_success_tracking(object_pos=env._get_object_state()[0], task_status=status)
+
+    assert env._episode_has_placed
+    assert env._episode_has_released
+    assert env._episode_has_settled
+    assert env._success_streak >= env.success_hold_steps
     env.close()

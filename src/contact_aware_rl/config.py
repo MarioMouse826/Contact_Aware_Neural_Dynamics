@@ -56,6 +56,8 @@ class EnvConfig:
 class RewardConfig:
     reach_weight: float = 1.0
     contact_weight: float = 0.25
+    grasp_alignment_weight: float = 0.0
+    start_stability_weight: float = 0.0
     lift_weight: float = 5.0
     transport_weight: float = 4.0
     place_weight: float = 3.0

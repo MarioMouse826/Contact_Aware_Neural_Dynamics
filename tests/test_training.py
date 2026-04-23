@@ -10,10 +10,23 @@ from contact_aware_rl.experiment import evaluate_checkpoint, run_training
 from contact_aware_rl.runtime import PROJECT_ROOT
 
 
+def load_smoke_config_for_embodiment(embodiment: str):
+    smoke_config = load_experiment_config(PROJECT_ROOT / "configs" / "smoke.yaml")
+    if embodiment != "arm_pinch":
+        smoke_config.env.embodiment = embodiment
+        return smoke_config
+
+    arm_config = load_experiment_config(PROJECT_ROOT / "configs" / "arm_box.yaml")
+    arm_config.env.max_episode_steps = smoke_config.env.max_episode_steps
+    arm_config.train = smoke_config.train
+    arm_config.eval = smoke_config.eval
+    arm_config.logging = smoke_config.logging
+    return arm_config
+
+
 @pytest.mark.parametrize("embodiment", ["cartesian_gripper", "arm_pinch"])
 def test_training_and_ablation_smoke(tmp_path: Path, embodiment: str) -> None:
-    config = load_experiment_config(PROJECT_ROOT / "configs" / "smoke.yaml")
-    config.env.embodiment = embodiment
+    config = load_smoke_config_for_embodiment(embodiment)
 
     artifacts = run_training(
         config,
@@ -32,10 +45,15 @@ def test_training_and_ablation_smoke(tmp_path: Path, embodiment: str) -> None:
     assert (artifacts.output_dir / "validation_history.json").exists()
 
     training_summary = json.loads(artifacts.training_summary_path.read_text())
+    monitor_history = json.loads((artifacts.output_dir / "monitor_history.json").read_text())
+    validation_history = json.loads((artifacts.output_dir / "validation_history.json").read_text())
     assert training_summary["training_status"] in {
         "success_checkpoint_selected",
         "no_success_checkpoint",
     }
+    assert len(monitor_history["history"]) >= 3
+    assert len(validation_history["history"]) >= 3
+    assert len(validation_history["history"]) == len(monitor_history["history"])
 
     evaluation = evaluate_checkpoint(
         artifacts.final_model_path,
@@ -48,6 +66,8 @@ def test_training_and_ablation_smoke(tmp_path: Path, embodiment: str) -> None:
     assert evaluation["split"] == "custom"
     assert evaluation["base_seed"] == 123
     assert 0.0 <= evaluation["success_rate"] <= 1.0
+    assert 0.0 <= evaluation["grasp_rate"] <= 1.0
+    assert 0.0 <= evaluation["lifted_grasp_rate"] <= 1.0
 
     if artifacts.best_success_model_path.exists():
         ablation = evaluate_checkpoint(

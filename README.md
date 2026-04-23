@@ -18,6 +18,8 @@ The default Cartesian task is now an explicit tabletop pick-and-place objective:
 
 The articulated arm supports `baseline`, `contact`, and `contact_ablation`. It does not support `always_contact`.
 
+Pick-place resets are seeded-randomized around the configured start marker for both embodiments. Evaluation now records monitor and validation summaries at every `eval_freq`, not only when the monitor tuple improves.
+
 All runs log to Weights and Biases under:
 
 - `entity=contact-aware-rl`
@@ -48,6 +50,8 @@ For the articulated arm pick-and-place task:
 ```bash
 python -m contact_aware_rl.train --config configs/arm_box.yaml --mode contact --seed 0 --num-envs 1
 ```
+
+`configs/arm_box.yaml` is the intended arm pick-place entry point. It uses an arm home pose near the pick-place start marker plus stronger pre-lift grasp/lift shaping than the generic defaults.
 
 For the legacy articulated arm lift-only task:
 

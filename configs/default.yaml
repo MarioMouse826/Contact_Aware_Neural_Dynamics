@@ -31,6 +31,8 @@ env:
 reward:
   reach_weight: 1.0
   contact_weight: 0.25
+  grasp_alignment_weight: 0.0
+  start_stability_weight: 0.0
   lift_weight: 5.0
   transport_weight: 4.0
   place_weight: 3.0

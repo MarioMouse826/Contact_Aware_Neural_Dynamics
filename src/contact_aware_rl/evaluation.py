@@ -30,9 +30,12 @@ class EvaluationSummary:
     mean_best_success_streak: float
     mean_episode_length: float
     mean_contact_stability: float
+    mean_dual_contact_stability: float
     mean_max_lift_height: float
     mean_goal_distance_xy: float
     mean_best_goal_distance_xy: float
+    grasp_rate: float
+    lifted_grasp_rate: float
     placement_rate: float
     release_rate: float
     settle_rate: float
@@ -103,6 +106,9 @@ def summarize_episodes(
         mean_contact_stability=mean(
             float(episode.get("contact_stability", 0.0)) for episode in episodes
         ),
+        mean_dual_contact_stability=mean(
+            float(episode.get("dual_contact_stability", 0.0)) for episode in episodes
+        ),
         mean_max_lift_height=mean(
             float(episode.get("max_lift_height", 0.0)) for episode in episodes
         ),
@@ -111,6 +117,10 @@ def summarize_episodes(
         ),
         mean_best_goal_distance_xy=mean(
             float(episode.get("best_goal_distance_xy", 0.0)) for episode in episodes
+        ),
+        grasp_rate=mean(float(episode.get("episode_has_grasped", 0.0)) for episode in episodes),
+        lifted_grasp_rate=mean(
+            float(episode.get("episode_has_lifted_grasp", 0.0)) for episode in episodes
         ),
         placement_rate=mean(float(episode.get("is_placed", 0.0)) for episode in episodes),
         release_rate=mean(float(episode.get("is_released", 0.0)) for episode in episodes),
@@ -164,12 +174,19 @@ def evaluate_policy(
                     final_info.get("steps_above_success_height", 0)
                 ),
                 "contact_stability": float(final_info.get("contact_stability", 0.0)),
+                "dual_contact_stability": float(
+                    final_info.get("dual_contact_stability", 0.0)
+                ),
                 "max_lift_height": float(final_info.get("max_lift_height", 0.0)),
                 "goal_distance_xy": float(final_info.get("goal_distance_xy", 0.0)),
                 "best_goal_distance_xy": float(final_info.get("best_goal_distance_xy", 0.0)),
-                "is_placed": float(final_info.get("is_placed", 0.0)),
-                "is_released": float(final_info.get("is_released", 0.0)),
-                "is_settled": float(final_info.get("is_settled", 0.0)),
+                "episode_has_grasped": float(final_info.get("episode_has_grasped", 0.0)),
+                "episode_has_lifted_grasp": float(
+                    final_info.get("episode_has_lifted_grasp", 0.0)
+                ),
+                "is_placed": float(final_info.get("episode_has_placed", 0.0)),
+                "is_released": float(final_info.get("episode_has_released", 0.0)),
+                "is_settled": float(final_info.get("episode_has_settled", 0.0)),
                 "termination_reason": final_info.get("termination_reason", "unknown"),
             }
         )

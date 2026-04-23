@@ -1,4 +1,5 @@
 env:
+  embodiment: cartesian_gripper
   max_episode_steps: 200
   substeps: 10
   action_scale_xyz: 0.015

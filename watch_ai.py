@@ -18,9 +18,10 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from contact_aware_rl.config import load_experiment_config
-from contact_aware_rl.env import ContactAwareGraspLiftEnv
+from contact_aware_rl.env import BaseContactAwareEnv, make_env
 from contact_aware_rl.evaluation import DEFAULT_EVAL_SPLIT, EVAL_SPLITS, resolve_eval_split
 from contact_aware_rl.modes import apply_mode_overrides, infer_mode_from_env_config, resolve_mode
+from contact_aware_rl.runtime import default_video_stem
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -40,7 +41,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-video",
         default=None,
-        help="Output MP4 path. Defaults to `videos/<model-stem>.mp4`.",
+        help="Output MP4 path. Defaults to `videos/<checkpoint-dir>.mp4`.",
     )
     parser.add_argument("--episodes", type=int, default=1, help="Number of episodes to record.")
     parser.add_argument(
@@ -137,12 +138,12 @@ def _resolve_mode_for_checkpoint(
 
 
 def _default_output_video(model_path_arg: str) -> Path:
-    target = PROJECT_ROOT / "videos" / f"{Path(model_path_arg).stem}.mp4"
+    target = PROJECT_ROOT / "videos" / f"{default_video_stem(model_path_arg)}.mp4"
     target.parent.mkdir(parents=True, exist_ok=True)
     return target
 
 
-def _default_fps(env: ContactAwareGraspLiftEnv) -> int:
+def _default_fps(env: BaseContactAwareEnv) -> int:
     seconds_per_action = float(env.model.opt.timestep) * int(env.env_config.substeps)
     if seconds_per_action <= 0:
         return 20
@@ -151,7 +152,7 @@ def _default_fps(env: ContactAwareGraspLiftEnv) -> int:
 
 def _capture_frame(
     renderer: mujoco.Renderer,
-    env: ContactAwareGraspLiftEnv,
+    env: BaseContactAwareEnv,
     *,
     camera: str,
 ) -> np.ndarray:
@@ -173,7 +174,7 @@ def _open_writer(output_video: Path, *, width: int, height: int, fps: int) -> cv
 
 
 def _resolve_render_size(
-    env: ContactAwareGraspLiftEnv,
+    env: BaseContactAwareEnv,
     *,
     requested_width: int | None,
     requested_height: int | None,
@@ -208,10 +209,10 @@ def record_policy_video(args: argparse.Namespace) -> dict[str, Any]:
     output_video = (
         Path(args.output_video).expanduser().resolve()
         if args.output_video is not None
-        else _default_output_video(args.model_path)
+        else _default_output_video(checkpoint_path)
     )
 
-    env = ContactAwareGraspLiftEnv(eval_config.env, eval_config.reward)
+    env = make_env(eval_config.env, eval_config.reward)
     renderer = None
     writer = None
     try:

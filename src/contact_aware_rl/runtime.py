@@ -21,3 +21,8 @@ def configure_runtime_environment() -> None:
     os.environ.setdefault("XDG_CACHE_HOME", str(CACHE_ROOT))
     os.environ.setdefault("FONTCONFIG_PATH", str(fontconfig_cache))
     os.environ.setdefault("WANDB_DIR", str(PROJECT_ROOT / "wandb"))
+
+
+def default_video_stem(model_path: str | Path) -> str:
+    path = Path(model_path).expanduser()
+    return path.parent.name or path.stem

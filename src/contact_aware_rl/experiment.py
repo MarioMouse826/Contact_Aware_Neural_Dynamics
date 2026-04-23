@@ -20,7 +20,7 @@ from wandb.integration.sb3 import WandbCallback
 
 from .callbacks import PeriodicEvalCallback
 from .config import EnvConfig, ExperimentConfig, RewardConfig, save_experiment_config
-from .env import ContactAwareGraspLiftEnv
+from .env import BaseContactAwareEnv, make_env
 from .evaluation import (
     compute_steps_to_success_threshold,
     evaluate_policy,
@@ -28,7 +28,12 @@ from .evaluation import (
     save_json,
 )
 from .logging_utils import prepare_output_dir, resolve_run_id, start_wandb_run
-from .modes import apply_mode_overrides, infer_mode_from_env_config, resolve_mode
+from .modes import (
+    apply_mode_overrides,
+    infer_mode_from_env_config,
+    resolve_mode,
+    trainable_modes_for_env,
+)
 
 MAX_PARALLEL_WORKERS = 12
 
@@ -50,7 +55,7 @@ def _build_monitored_env(
     reward_config_dict: dict[str, Any],
     seed: int,
 ) -> Monitor:
-    wrapped_env = ContactAwareGraspLiftEnv(
+    wrapped_env = make_env(
         env_config=EnvConfig(**env_config_dict),
         reward_config=RewardConfig(**reward_config_dict),
     )
@@ -68,8 +73,8 @@ def _build_monitored_env(
     )
 
 
-def _build_eval_env(config: ExperimentConfig) -> ContactAwareGraspLiftEnv:
-    return ContactAwareGraspLiftEnv(config.env, config.reward)
+def _build_eval_env(config: ExperimentConfig) -> BaseContactAwareEnv:
+    return make_env(config.env, config.reward)
 
 
 def _make_vector_env(config: ExperimentConfig) -> DummyVecEnv | SubprocVecEnv:
@@ -109,6 +114,7 @@ def _build_training_summary(
     )
     return {
         "mode": mode,
+        "embodiment": config.env.embodiment,
         "run_id": run_id,
         "seed": config.train.seed,
         "num_envs": config.train.num_envs,
@@ -192,6 +198,7 @@ def run_training(
 
         metadata = {
             "mode": mode,
+            "embodiment": run_config.env.embodiment,
             "run_id": run_id,
             "seed": run_config.train.seed,
             "num_envs": run_config.train.num_envs,
@@ -428,7 +435,7 @@ def run_proposal_suite(
     results: list[dict[str, Any]] = []
 
     for seed in seeds:
-        for mode in ("baseline", "contact", "always_contact"):
+        for mode in trainable_modes_for_env(config.env):
             artifacts = run_training(
                 config,
                 mode=mode,

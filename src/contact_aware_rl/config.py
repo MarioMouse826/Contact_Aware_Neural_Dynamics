@@ -11,12 +11,16 @@ import yaml
 
 @dataclass
 class EnvConfig:
+    embodiment: str = "cartesian_gripper"
     observation_mode: str = "contact"
     contact_override: str | None = None
     max_episode_steps: int = 200
     substeps: int = 10
     action_scale_xyz: float = 0.015
     action_scale_grip: float = 0.01
+    arm_joint_delta_scales: list[float] = field(
+        default_factory=lambda: [0.08, 0.08, 0.08, 0.08]
+    )
     table_height: float = 0.05
     success_height_over_table: float = 0.08
     success_hold_steps: int = 10
@@ -25,8 +29,12 @@ class EnvConfig:
     reset_object_yaw_range: float = math.pi / 6.0
     reset_gripper_xy_noise: float = 0.025
     reset_gripper_z_noise: float = 0.01
+    reset_arm_joint_noise: float = 0.05
     initial_gripper_height: float = 0.16
     initial_finger_position: float = 0.0
+    initial_arm_joint_positions: list[float] = field(
+        default_factory=lambda: [-0.01, 0.46, -0.97, -1.68]
+    )
     object_half_extents: list[float] = field(
         default_factory=lambda: [0.025, 0.025, 0.03]
     )

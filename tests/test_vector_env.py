@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from contact_aware_rl.config import load_experiment_config
 from contact_aware_rl.experiment import _make_vector_env
@@ -8,8 +9,10 @@ from contact_aware_rl.modes import apply_mode_overrides
 from contact_aware_rl.runtime import PROJECT_ROOT
 
 
-def test_parallel_vector_env_step() -> None:
+@pytest.mark.parametrize("embodiment", ["cartesian_gripper", "arm_pinch"])
+def test_parallel_vector_env_step(embodiment: str) -> None:
     config = load_experiment_config(PROJECT_ROOT / "configs" / "smoke.yaml")
+    config.env.embodiment = embodiment
     config = apply_mode_overrides(config, "contact")
     config.train.num_envs = 2
 
@@ -18,7 +21,10 @@ def test_parallel_vector_env_step() -> None:
         obs = env.reset()
         assert obs.shape[0] == 2
 
-        next_obs, rewards, dones, infos = env.step(np.zeros((2, 4), dtype=np.float32))
+        action_dim = int(env.action_space.shape[0])
+        next_obs, rewards, dones, infos = env.step(
+            np.zeros((2, action_dim), dtype=np.float32)
+        )
         assert next_obs.shape[0] == 2
         assert rewards.shape == (2,)
         assert dones.shape == (2,)

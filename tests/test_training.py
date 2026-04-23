@@ -3,20 +3,24 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from contact_aware_rl.config import load_experiment_config
 from contact_aware_rl.experiment import evaluate_checkpoint, run_training
 from contact_aware_rl.runtime import PROJECT_ROOT
 
 
-def test_training_and_ablation_smoke(tmp_path: Path) -> None:
+@pytest.mark.parametrize("embodiment", ["cartesian_gripper", "arm_pinch"])
+def test_training_and_ablation_smoke(tmp_path: Path, embodiment: str) -> None:
     config = load_experiment_config(PROJECT_ROOT / "configs" / "smoke.yaml")
+    config.env.embodiment = embodiment
 
     artifacts = run_training(
         config,
         mode="contact",
         seed=0,
         num_envs=1,
-        output_root=str(tmp_path / "outputs"),
+        output_root=str(tmp_path / embodiment / "outputs"),
         wandb_mode="disabled",
     )
 

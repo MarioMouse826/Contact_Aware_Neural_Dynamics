@@ -1,36 +1,77 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from stable_baselines3.common.env_checker import check_env
 
 from contact_aware_rl.config import EnvConfig, RewardConfig
-from contact_aware_rl.env import ContactAwareGraspLiftEnv
+from contact_aware_rl.env import ArmPinchGraspLiftEnv, ContactAwareGraspLiftEnv, make_env
+
+OBJECT_POS = (0.0, 0.0, 0.08)
+
+ARM_CONTACT_POSES: dict[str, tuple[np.ndarray, tuple[float, float], np.ndarray]] = {
+    "none": (
+        np.array([0.2604372, 0.74606935, -1.37162827, -1.01526105], dtype=np.float64),
+        (0.02267991, 0.02979928),
+        np.array([0.0, 0.0], dtype=np.float32),
+    ),
+    "left": (
+        np.array([-0.12147974, 0.69076101, -1.38235517, -1.29045246], dtype=np.float64),
+        (0.00515804, 0.02500329),
+        np.array([1.0, 0.0], dtype=np.float32),
+    ),
+    "right": (
+        np.array([0.117752, 0.46185739, -1.0252404, -1.56657285], dtype=np.float64),
+        (0.00741623, 0.01543839),
+        np.array([0.0, 1.0], dtype=np.float32),
+    ),
+    "both": (
+        np.array([-0.00859175, 0.45848369, -0.96914701, -1.67733621], dtype=np.float64),
+        (0.01401319, 0.02270039),
+        np.array([1.0, 1.0], dtype=np.float32),
+    ),
+}
+ARM_SCRIPTED_LIFT_ACTION = np.array(
+    [0.60013664, 0.96025074, 0.96087146, 0.95056844, 0.8994401],
+    dtype=np.float32,
+)
 
 
-def make_env(*, mode: str = "contact", override: str | None = None) -> ContactAwareGraspLiftEnv:
-    return ContactAwareGraspLiftEnv(
+def create_env(
+    *,
+    embodiment: str = "cartesian_gripper",
+    mode: str = "contact",
+    override: str | None = None,
+    max_episode_steps: int = 50,
+):
+    return make_env(
         EnvConfig(
+            embodiment=embodiment,
             observation_mode=mode,
             contact_override=override,
-            max_episode_steps=50,
+            max_episode_steps=max_episode_steps,
         ),
         RewardConfig(),
     )
 
 
-def test_env_passes_sb3_checker() -> None:
-    env = make_env()
+@pytest.mark.parametrize("embodiment", ["cartesian_gripper", "arm_pinch"])
+def test_env_passes_sb3_checker(embodiment: str) -> None:
+    env = create_env(embodiment=embodiment)
     check_env(env, warn=True, skip_render_check=True)
     env.close()
 
 
-def test_contact_extraction_no_left_right_and_both() -> None:
-    env = make_env()
+def test_cartesian_contact_extraction_no_left_right_and_both() -> None:
+    env = ContactAwareGraspLiftEnv(
+        EnvConfig(observation_mode="contact", max_episode_steps=50),
+        RewardConfig(),
+    )
 
     env.set_manual_configuration(
         gripper_xyz=(0.0, 0.0, 0.08),
         finger_positions=(0.0, 0.0),
-        object_position=(0.0, 0.0, 0.08),
+        object_position=OBJECT_POS,
     )
     assert np.array_equal(env._get_true_contact_bits(), np.array([0.0, 0.0], dtype=np.float32))
 
@@ -51,17 +92,35 @@ def test_contact_extraction_no_left_right_and_both() -> None:
     env.set_manual_configuration(
         gripper_xyz=(0.0, 0.0, 0.08),
         finger_positions=(0.048, 0.048),
-        object_position=(0.0, 0.0, 0.08),
+        object_position=OBJECT_POS,
     )
     assert np.array_equal(env._get_true_contact_bits(), np.array([1.0, 1.0], dtype=np.float32))
     env.close()
 
 
-def test_observation_shapes_and_contact_overrides() -> None:
-    baseline_env = make_env(mode="baseline")
-    contact_env = make_env(mode="contact")
-    always_env = make_env(mode="contact", override="ones")
-    zero_env = make_env(mode="contact", override="zeros")
+def test_arm_contact_extraction_no_left_right_and_both() -> None:
+    env = ArmPinchGraspLiftEnv(
+        EnvConfig(embodiment="arm_pinch", observation_mode="contact", max_episode_steps=50),
+        RewardConfig(),
+    )
+
+    for pose_name in ("none", "left", "right", "both"):
+        arm_joint_positions, finger_positions, expected_bits = ARM_CONTACT_POSES[pose_name]
+        env.set_manual_configuration(
+            arm_joint_positions=arm_joint_positions,
+            finger_positions=finger_positions,
+            object_position=OBJECT_POS,
+        )
+        assert np.array_equal(env._get_true_contact_bits(), expected_bits)
+
+    env.close()
+
+
+def test_cartesian_observation_shapes_and_contact_overrides() -> None:
+    baseline_env = create_env(embodiment="cartesian_gripper", mode="baseline")
+    contact_env = create_env(embodiment="cartesian_gripper", mode="contact")
+    always_env = create_env(embodiment="cartesian_gripper", mode="contact", override="ones")
+    zero_env = create_env(embodiment="cartesian_gripper", mode="contact", override="zeros")
 
     baseline_obs, _ = baseline_env.reset(seed=0)
     contact_obs, _ = contact_env.reset(seed=0)
@@ -79,13 +138,36 @@ def test_observation_shapes_and_contact_overrides() -> None:
     zero_env.close()
 
 
-def test_reward_potential_increases_with_two_finger_contact_and_lift() -> None:
-    env = make_env()
+def test_arm_observation_shapes_and_contact_overrides() -> None:
+    baseline_env = create_env(embodiment="arm_pinch", mode="baseline")
+    contact_env = create_env(embodiment="arm_pinch", mode="contact")
+    zero_env = create_env(embodiment="arm_pinch", mode="contact", override="zeros")
+
+    baseline_obs, _ = baseline_env.reset(seed=0)
+    contact_obs, _ = contact_env.reset(seed=0)
+    zero_obs, _ = zero_env.reset(seed=0)
+
+    assert baseline_obs.shape == (28,)
+    assert contact_obs.shape == (30,)
+    assert np.all(zero_obs[-2:] == 0.0)
+
+    baseline_env.close()
+    contact_env.close()
+    zero_env.close()
+
+
+def test_arm_env_rejects_always_contact_override() -> None:
+    with pytest.raises(ValueError, match="always-contact"):
+        create_env(embodiment="arm_pinch", mode="contact", override="ones")
+
+
+def test_cartesian_reward_potential_increases_with_two_finger_contact_and_lift() -> None:
+    env = create_env(embodiment="cartesian_gripper")
 
     env.set_manual_configuration(
         gripper_xyz=(0.0, 0.0, 0.08),
         finger_positions=(0.0, 0.0),
-        object_position=(0.0, 0.0, 0.08),
+        object_position=OBJECT_POS,
     )
     no_contact = env._compute_potential_terms(env._get_true_contact_bits())
 
@@ -99,7 +181,7 @@ def test_reward_potential_increases_with_two_finger_contact_and_lift() -> None:
     env.set_manual_configuration(
         gripper_xyz=(0.0, 0.0, 0.08),
         finger_positions=(0.048, 0.048),
-        object_position=(0.0, 0.0, 0.08),
+        object_position=OBJECT_POS,
     )
     with_contact = env._compute_potential_terms(env._get_true_contact_bits())
 
@@ -116,17 +198,70 @@ def test_reward_potential_increases_with_two_finger_contact_and_lift() -> None:
     env.close()
 
 
-def test_shaped_reward_does_not_accumulate_on_plateau() -> None:
-    env = make_env()
+def test_arm_reward_uses_geometry_only_not_contact_bits() -> None:
+    env = create_env(embodiment="arm_pinch")
+
+    no_contact_arm, no_contact_fingers, _ = ARM_CONTACT_POSES["none"]
+    both_contact_arm, both_contact_fingers, _ = ARM_CONTACT_POSES["both"]
 
     env.set_manual_configuration(
-        gripper_xyz=(0.0, 0.0, 0.15),
-        finger_positions=(0.048, 0.048),
+        arm_joint_positions=no_contact_arm,
+        finger_positions=no_contact_fingers,
+        object_position=OBJECT_POS,
+    )
+    no_contact = env._compute_potential_terms(env._get_true_contact_bits())
+
+    env.set_manual_configuration(
+        arm_joint_positions=both_contact_arm,
+        finger_positions=both_contact_fingers,
+        object_position=OBJECT_POS,
+    )
+    with_contact = env._compute_potential_terms(env._get_true_contact_bits())
+
+    env.set_manual_configuration(
+        arm_joint_positions=both_contact_arm,
+        finger_positions=both_contact_fingers,
         object_position=(0.0, 0.0, 0.16),
     )
+    lifted = env._compute_potential_terms(env._get_true_contact_bits())
+
+    assert no_contact.contact == 0.0
+    assert with_contact.contact == 0.0
+    assert lifted.lift > with_contact.lift
+    env.close()
+
+
+@pytest.mark.parametrize(
+    ("embodiment", "lifted_state"),
+    [
+        (
+            "cartesian_gripper",
+            {
+                "gripper_xyz": (0.0, 0.0, 0.15),
+                "finger_positions": (0.048, 0.048),
+                "object_position": (0.0, 0.0, 0.16),
+            },
+        ),
+        (
+            "arm_pinch",
+            {
+                "arm_joint_positions": ARM_CONTACT_POSES["both"][0],
+                "finger_positions": ARM_CONTACT_POSES["both"][1],
+                "object_position": (0.0, 0.0, 0.16),
+            },
+        ),
+    ],
+)
+def test_shaped_reward_does_not_accumulate_on_plateau(
+    embodiment: str,
+    lifted_state: dict[str, object],
+) -> None:
+    env = create_env(embodiment=embodiment)
+    env.set_manual_configuration(**lifted_state)
+
     potential = env._compute_potential_terms(env._get_true_contact_bits())
     reward_terms = env._compute_reward_terms(
-        np.zeros(4, dtype=np.float32),
+        np.zeros(env.action_space.shape[0], dtype=np.float32),
         potential,
         potential,
         success=False,
@@ -136,7 +271,7 @@ def test_shaped_reward_does_not_accumulate_on_plateau() -> None:
     env.close()
 
 
-def test_scripted_grasp_sequence_reaches_success() -> None:
+def test_scripted_cartesian_grasp_sequence_reaches_success() -> None:
     env = ContactAwareGraspLiftEnv(
         EnvConfig(observation_mode="contact", max_episode_steps=200),
         RewardConfig(),
@@ -158,6 +293,29 @@ def test_scripted_grasp_sequence_reaches_success() -> None:
                 success = bool(info["is_success"])
                 break
         if success:
+            break
+
+    assert success
+    env.close()
+
+
+def test_scripted_arm_grasp_sequence_reaches_success() -> None:
+    env = ArmPinchGraspLiftEnv(
+        EnvConfig(embodiment="arm_pinch", observation_mode="contact", max_episode_steps=200),
+        RewardConfig(),
+    )
+    env.reset(seed=0)
+    env.set_manual_configuration(
+        arm_joint_positions=ARM_CONTACT_POSES["both"][0],
+        finger_positions=ARM_CONTACT_POSES["both"][1],
+        object_position=OBJECT_POS,
+    )
+
+    success = False
+    for _ in range(80):
+        _, _, terminated, truncated, info = env.step(ARM_SCRIPTED_LIFT_ACTION)
+        if terminated or truncated:
+            success = bool(info["is_success"])
             break
 
     assert success

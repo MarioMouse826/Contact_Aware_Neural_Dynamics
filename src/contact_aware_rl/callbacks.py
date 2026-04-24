@@ -69,6 +69,7 @@ class PeriodicEvalCallback(BaseCallback):
 
         self.best_model_path = self.output_dir / "best_model.zip"
         self.best_success_model_path = self.output_dir / "best_success_model.zip"
+        self.latest_model_path = self.output_dir / "latest_model.zip"
         self.final_model_path = self.output_dir / "final_model.zip"
         self.checkpoint_dir = self.output_dir / "checkpoints"
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -268,6 +269,7 @@ class PeriodicEvalCallback(BaseCallback):
             self._run_validation(trigger="training_end")
 
         self.model.save(str(self.final_model_path))
+        self.model.save(str(self.latest_model_path))
 
         if self.stop_reason is None:
             if self.num_timesteps >= self.total_timesteps:

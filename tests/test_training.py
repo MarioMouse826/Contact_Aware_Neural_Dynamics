@@ -40,7 +40,10 @@ def test_training_and_ablation_smoke(tmp_path: Path, embodiment: str) -> None:
     assert artifacts.config_path.exists()
     assert artifacts.metadata_path.exists()
     assert artifacts.training_summary_path.exists()
+    assert artifacts.latest_model_path.exists()
     assert artifacts.final_model_path.exists()
+    assert artifacts.latest_model_path.name == "latest_model.zip"
+    assert artifacts.final_model_path.name == "final_model.zip"
     assert (artifacts.output_dir / "monitor_history.json").exists()
     assert (artifacts.output_dir / "validation_history.json").exists()
 
@@ -51,6 +54,8 @@ def test_training_and_ablation_smoke(tmp_path: Path, embodiment: str) -> None:
         "success_checkpoint_selected",
         "no_success_checkpoint",
     }
+    assert training_summary["latest_model_path"] == str(artifacts.latest_model_path)
+    assert training_summary["final_model_path"] == str(artifacts.final_model_path)
     assert "transport_ready_rate" in training_summary["final_validation_metrics"]
     assert "over_goal_rate" in training_summary["final_validation_metrics"]
     assert len(monitor_history["history"]) >= 3

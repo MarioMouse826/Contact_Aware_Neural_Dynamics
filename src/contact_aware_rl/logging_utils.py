@@ -39,3 +39,24 @@ def prepare_output_dir(output_root: str | Path, run_id: str) -> Path:
     output_dir = Path(output_root) / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
+
+
+def save_wandb_files(
+    paths: list[str | Path],
+    *,
+    base_path: str | Path,
+) -> list[str]:
+    if wandb.run is None:
+        return []
+
+    saved: list[str] = []
+    for raw_path in paths:
+        path = Path(raw_path)
+        if not path.exists():
+            continue
+        result = wandb.save(str(path), base_path=str(base_path), policy="now")
+        if isinstance(result, list):
+            saved.extend(result)
+        elif result:
+            saved.append(str(result))
+    return saved

@@ -762,6 +762,102 @@ def test_pick_place_goal_does_not_succeed_while_still_holding_cube() -> None:
     env.close()
 
 
+def test_pick_place_release_progress_outweighs_holding_at_goal() -> None:
+    env = create_pick_place_env()
+    env.reset(seed=0)
+    _prime_pick_place_transport(env)
+
+    held_goal_pos = (PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], 0.10)
+    env.set_manual_configuration(
+        gripper_xyz=held_goal_pos,
+        finger_positions=(0.048, 0.048),
+        object_position=PICK_PLACE_GOAL_POS,
+    )
+    held_status = env._build_task_status(env._get_true_contact_bits())
+    held_potential = env._compute_potential_terms(env._get_true_contact_bits(), held_status)
+
+    env._episode_has_lifted_for_transport = True
+    env._episode_has_over_goal = True
+    env._episode_has_placed = True
+    released_goal_pos = (PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], 0.16)
+    env.set_manual_configuration(
+        gripper_xyz=released_goal_pos,
+        finger_positions=(0.0, 0.0),
+        object_position=PICK_PLACE_GOAL_POS,
+    )
+    released_status = env._build_task_status(env._get_true_contact_bits())
+    released_potential = env._compute_potential_terms(
+        env._get_true_contact_bits(),
+        released_status,
+    )
+
+    assert held_status.is_placed
+    assert not held_status.is_released
+    assert released_status.is_released
+    assert released_potential.release > held_potential.release
+    assert released_potential.total > held_potential.total
+    env.close()
+
+
+def test_pick_place_release_corridor_rewards_opening_before_full_detach() -> None:
+    env = create_pick_place_env()
+    env.reset(seed=0)
+    _prime_pick_place_transport(env)
+
+    held_goal_pos = (PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], 0.10)
+    env.set_manual_configuration(
+        gripper_xyz=held_goal_pos,
+        finger_positions=(0.048, 0.048),
+        object_position=PICK_PLACE_GOAL_POS,
+    )
+    held_status = env._build_task_status(env._get_true_contact_bits())
+    held_potential = env._compute_potential_terms(env._get_true_contact_bits(), held_status)
+
+    env._episode_has_lifted_for_transport = True
+    env._episode_has_over_goal = True
+    env.set_manual_configuration(
+        gripper_xyz=held_goal_pos,
+        finger_positions=(0.0, 0.0),
+        object_position=PICK_PLACE_GOAL_POS,
+    )
+    opened_status = env._build_task_status(env._get_true_contact_bits())
+    opened_potential = env._compute_potential_terms(
+        env._get_true_contact_bits(),
+        opened_status,
+    )
+
+    assert held_status.is_placed
+    assert opened_status.is_placed
+    assert opened_potential.release > held_potential.release
+    env.close()
+
+
+def test_pick_place_transport_and_place_persist_after_release() -> None:
+    env = create_pick_place_env()
+    env.reset(seed=0)
+    _prime_pick_place_transport(env)
+
+    env._episode_has_lifted_for_transport = True
+    env._episode_has_over_goal = True
+    env._episode_has_placed = True
+    released_goal_pos = (PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], 0.16)
+    env.set_manual_configuration(
+        gripper_xyz=released_goal_pos,
+        finger_positions=(0.0, 0.0),
+        object_position=PICK_PLACE_GOAL_POS,
+    )
+    released_status = env._build_task_status(env._get_true_contact_bits())
+    released_potential = env._compute_potential_terms(
+        env._get_true_contact_bits(),
+        released_status,
+    )
+
+    assert released_status.is_released
+    assert released_potential.transport > 0.0
+    assert released_potential.place > 0.0
+    env.close()
+
+
 def test_pick_place_release_and_settle_sequence_reaches_success() -> None:
     env = create_pick_place_env(max_episode_steps=250)
     env.reset(seed=0)

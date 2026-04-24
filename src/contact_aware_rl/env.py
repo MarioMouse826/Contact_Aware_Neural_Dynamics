@@ -431,6 +431,19 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         right = self.data.site_xpos[self._right_tip_site_id].copy()
         return left, right
 
+    def _get_finger_open_progress(self) -> float:
+        q, _ = self._get_control_state()
+        finger_positions = np.asarray(q[-2:], dtype=np.float64)
+        finger_low = self._ctrl_low[-2:]
+        finger_high = self._ctrl_high[-2:]
+        finger_span = np.maximum(1e-6, finger_high - finger_low)
+        finger_close_progress = np.clip(
+            (finger_positions - finger_low) / finger_span,
+            0.0,
+            1.0,
+        )
+        return float(1.0 - np.mean(finger_close_progress))
+
     def _compute_contact_progress(self, true_contact_bits: np.ndarray) -> float:
         any_contact = float(np.any(true_contact_bits > 0.5))
         dual_contact = float(np.all(true_contact_bits > 0.5))
@@ -647,8 +660,13 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
                 and task_status.lift_clearance >= self.env_config.pick_place_transport_clearance
             )
         )
-        transport_ready_gate = 1.0 if transport_ready and task_status.is_grasped else 0.0
-        transport_gate = max(lift_progress, transport_ready_gate)
+        placed_or_locked = bool(task_status.is_placed or self._episode_has_placed)
+        released_or_locked = bool(task_status.is_released or self._episode_has_released)
+        carry_stage_active = bool(
+            transport_ready
+            and (task_status.is_grasped or placed_or_locked or released_or_locked)
+        )
+        transport_ready_gate = 1.0 if carry_stage_active else 0.0
         contact = (
             self.reward_config.contact_weight
             * self._compute_contact_progress(true_contact_bits)
@@ -674,23 +692,59 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
             )
 
         # Preserve carry-stage value once the policy has achieved a valid lifted
-        # transport grasp so lowering over goal B is not penalized.
+        # transport grasp so lowering onto goal B and releasing are not penalized.
         carry_lift_progress = max(lift_progress, transport_ready_gate)
         lift = self.reward_config.lift_weight * carry_lift_progress
 
         transport_progress = 0.0
-        if transport_ready and task_status.is_grasped:
+        if carry_stage_active:
             transport_progress = float(goal_progress**2)
         transport = self.reward_config.transport_weight * transport_progress
 
         place_progress = 0.0
-        if transport_ready and task_status.is_grasped:
+        if carry_stage_active:
             place_progress = float(goal_zone_progress * place_height_progress)
         place = self.reward_config.place_weight * place_progress
 
+        contact_progress = self._compute_contact_progress(true_contact_bits)
+        finger_open_progress = self._get_finger_open_progress()
+        release_ready_progress = 0.0
+        if transport_ready and (task_status.is_over_goal or self._episode_has_over_goal):
+            slow_progress = float(
+                np.clip(
+                    1.0
+                    - (
+                        task_status.object_speed
+                        / max(1e-6, 2.0 * self.env_config.pick_place_settle_speed_threshold)
+                    ),
+                    0.0,
+                    1.0,
+                )
+            )
+            release_ready_progress = float(
+                goal_zone_progress * place_height_progress * slow_progress
+            )
         release_progress = 0.0
-        if self._episode_has_lifted_for_transport and task_status.is_placed:
-            release_progress = 1.0 if not task_status.has_any_contact else 0.0
+        if transport_ready and (task_status.is_placed or self._episode_has_placed):
+            low_contact_progress = 1.0 - contact_progress
+            retreat_height_progress = float(
+                np.clip(
+                    (gripper_center[2] - object_pos[2] - 0.02)
+                    / max(1e-6, self.env_config.pick_place_transport_clearance),
+                    0.0,
+                    1.0,
+                )
+            )
+            release_progress = (
+                release_ready_progress * finger_open_progress
+                + 0.5 * release_ready_progress * low_contact_progress * retreat_height_progress
+                - 0.2
+                * release_ready_progress
+                * contact_progress
+                * (1.0 - finger_open_progress)
+            )
+            if released_or_locked:
+                release_progress = 1.0
         release = self.reward_config.release_weight * release_progress
 
         settle_progress = 0.0

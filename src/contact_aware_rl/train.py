@@ -50,6 +50,7 @@ def main() -> None:
                 "output_dir": str(artifacts.output_dir),
                 "best_model_path": str(artifacts.best_model_path),
                 "best_success_model_path": str(artifacts.best_success_model_path),
+                "latest_model_path": str(artifacts.latest_model_path),
                 "final_model_path": str(artifacts.final_model_path),
                 "training_summary_path": str(artifacts.training_summary_path),
             },

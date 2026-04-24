@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from contact_aware_rl.config import ExperimentConfig, LoggingConfig
 from contact_aware_rl.experiment import _build_wandb_tags
-from contact_aware_rl.logging_utils import start_wandb_run
+from contact_aware_rl.logging_utils import save_wandb_files, start_wandb_run
 
 
 class DummyRun:
@@ -30,6 +32,36 @@ def test_wandb_run_does_not_set_name(monkeypatch) -> None:
     assert "name" not in captured
     assert captured["entity"] == "contact-aware-rl"
     assert captured["project"] == "contact-aware-neural-dynamics"
+
+
+def test_save_wandb_files_uploads_existing_files_with_run_root_names(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured = []
+    best_model = tmp_path / "best_model.zip"
+    latest_model = tmp_path / "latest_model.zip"
+    best_model.write_bytes(b"best")
+    latest_model.write_bytes(b"latest")
+
+    monkeypatch.setattr("contact_aware_rl.logging_utils.wandb.run", DummyRun())
+
+    def fake_save(glob_str, *, base_path, policy):
+        captured.append((glob_str, base_path, policy))
+        return [glob_str]
+
+    monkeypatch.setattr("contact_aware_rl.logging_utils.wandb.save", fake_save)
+
+    saved = save_wandb_files(
+        [best_model, latest_model, tmp_path / "missing.zip"],
+        base_path=tmp_path,
+    )
+
+    assert saved == [str(best_model), str(latest_model)]
+    assert captured == [
+        (str(best_model), str(tmp_path), "now"),
+        (str(latest_model), str(tmp_path), "now"),
+    ]
 
 
 @pytest.mark.parametrize(

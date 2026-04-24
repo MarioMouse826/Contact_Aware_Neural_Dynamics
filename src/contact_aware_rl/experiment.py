@@ -27,7 +27,12 @@ from .evaluation import (
     resolve_eval_split,
     save_json,
 )
-from .logging_utils import prepare_output_dir, resolve_run_id, start_wandb_run
+from .logging_utils import (
+    prepare_output_dir,
+    resolve_run_id,
+    save_wandb_files,
+    start_wandb_run,
+)
 from .modes import (
     apply_mode_overrides,
     infer_mode_from_env_config,
@@ -65,6 +70,7 @@ class TrainingArtifacts:
     metadata_path: Path
     best_model_path: Path
     best_success_model_path: Path
+    latest_model_path: Path
     final_model_path: Path
     training_summary_path: Path
 
@@ -161,6 +167,7 @@ def _build_training_summary(
         "best_model_path": best_model_path,
         "best_timestep": eval_callback.best_timestep,
         "best_success_model_path": best_success_model_path,
+        "latest_model_path": str(eval_callback.latest_model_path),
         "final_model_path": str(eval_callback.final_model_path),
         "best_success_timestep": eval_callback.best_success_timestep,
         "best_validation_metrics": eval_callback.best_validation_summary,
@@ -302,8 +309,7 @@ def run_training(
         )
         wandb_callback = WandbCallback(
             gradient_save_freq=run_config.logging.gradient_save_freq,
-            model_save_freq=run_config.logging.model_save_freq,
-            model_save_path=str(output_dir / "wandb_models"),
+            model_save_freq=0,
             verbose=0,
         )
 
@@ -333,6 +339,13 @@ def run_training(
             test_summary=test_summary,
         )
         save_json(summary, summary_path)
+        save_wandb_files(
+            [
+                eval_callback.best_model_path,
+                eval_callback.latest_model_path,
+            ],
+            base_path=output_dir,
+        )
 
         return TrainingArtifacts(
             run_id=run_id,
@@ -342,6 +355,7 @@ def run_training(
             metadata_path=metadata_path,
             best_model_path=eval_callback.best_model_path,
             best_success_model_path=eval_callback.best_success_model_path,
+            latest_model_path=eval_callback.latest_model_path,
             final_model_path=eval_callback.final_model_path,
             training_summary_path=summary_path,
         )

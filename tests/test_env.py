@@ -883,6 +883,188 @@ def test_pick_place_release_and_settle_sequence_reaches_success() -> None:
     env.close()
 
 
+def test_action_filter_blends_with_previous_command() -> None:
+    env = ContactAwareGraspLiftEnv(
+        EnvConfig(
+            task="pick_place_ab",
+            observation_mode="contact",
+            action_smoothing=0.2,
+        ),
+        RewardConfig(),
+    )
+    env._previous_action = np.array([0.5, -0.5, 0.25, -0.25], dtype=np.float32)
+
+    filtered = env._filter_action(np.array([1.0, 1.0, -1.0, -1.0], dtype=np.float32))
+
+    assert np.allclose(filtered, np.array([0.9, 0.7, -0.75, -0.85], dtype=np.float32))
+    env.close()
+
+
+def test_pick_place_release_ready_zone_rewards_opening_before_full_release() -> None:
+    env = ContactAwareGraspLiftEnv(
+        EnvConfig(
+            task="pick_place_ab",
+            observation_mode="contact",
+            max_episode_steps=250,
+        ),
+        RewardConfig(
+            release_weight=3.0,
+            release_ready_open_bonus_weight=0.35,
+            release_ready_hold_penalty_weight=0.12,
+        ),
+    )
+    env.reset(seed=0)
+    _prime_pick_place_transport(env)
+
+    release_ready_pos = (PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], 0.10)
+    env.set_manual_configuration(
+        gripper_xyz=release_ready_pos,
+        finger_positions=(0.048, 0.048),
+        object_position=PICK_PLACE_GOAL_POS,
+    )
+    held_status = env._build_task_status(env._get_true_contact_bits())
+    held_potential = env._compute_potential_terms(env._get_true_contact_bits(), held_status)
+
+    env._episode_has_lifted_for_transport = True
+    env._episode_has_over_goal = True
+    env.set_manual_configuration(
+        gripper_xyz=release_ready_pos,
+        finger_positions=(0.02, 0.02),
+        object_position=PICK_PLACE_GOAL_POS,
+    )
+    opening_status = env._build_task_status(env._get_true_contact_bits())
+    opening_potential = env._compute_potential_terms(
+        env._get_true_contact_bits(),
+        opening_status,
+    )
+
+    assert held_status.is_placed
+    assert opening_status.is_placed
+    assert opening_potential.release > held_potential.release
+    env.close()
+
+
+def test_pick_place_post_release_retreat_beats_recontact() -> None:
+    env = ContactAwareGraspLiftEnv(
+        EnvConfig(
+            task="pick_place_ab",
+            observation_mode="contact",
+            max_episode_steps=250,
+        ),
+        RewardConfig(
+            release_weight=3.0,
+            post_release_retreat_bonus_weight=0.25,
+            post_release_recontact_penalty_weight=0.35,
+        ),
+    )
+    env.reset(seed=0)
+    _prime_pick_place_transport(env)
+    env._episode_has_lifted_for_transport = True
+    env._episode_has_over_goal = True
+    env._episode_has_placed = True
+    env._episode_has_released = True
+
+    env.set_manual_configuration(
+        gripper_xyz=(PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], 0.16),
+        finger_positions=(0.0, 0.0),
+        object_position=PICK_PLACE_GOAL_POS,
+    )
+    retreat_status = env._build_task_status(env._get_true_contact_bits())
+    retreat_potential = env._compute_potential_terms(
+        env._get_true_contact_bits(),
+        retreat_status,
+    )
+
+    env.set_manual_configuration(
+        gripper_xyz=(PICK_PLACE_GOAL_POS[0], PICK_PLACE_GOAL_POS[1], 0.10),
+        finger_positions=(0.048, 0.048),
+        object_position=PICK_PLACE_GOAL_POS,
+    )
+    recontact_status = env._build_task_status(env._get_true_contact_bits())
+    recontact_potential = env._compute_potential_terms(
+        env._get_true_contact_bits(),
+        recontact_status,
+    )
+
+    assert retreat_status.is_released
+    assert not recontact_status.is_released
+    assert retreat_potential.release > recontact_potential.release
+    assert retreat_potential.total > recontact_potential.total
+    env.close()
+
+
+def test_transport_phase_action_constraints_reduce_vertical_command() -> None:
+    env = ContactAwareGraspLiftEnv(
+        EnvConfig(
+            task="pick_place_ab",
+            observation_mode="contact",
+            transport_z_action_scale=0.35,
+        ),
+        RewardConfig(),
+    )
+    env.reset(seed=0)
+
+    lift_height = PICK_PLACE_START_POS[2] + 0.06
+    env.set_manual_configuration(
+        gripper_xyz=(PICK_PLACE_START_POS[0], PICK_PLACE_START_POS[1], lift_height),
+        finger_positions=(0.048, 0.048),
+        object_position=(PICK_PLACE_START_POS[0], PICK_PLACE_START_POS[1], lift_height),
+    )
+    env._episode_has_lifted_for_transport = True
+    status = env._build_task_status(env._get_true_contact_bits())
+    constrained = env._apply_transport_phase_action_constraints(
+        np.array([0.2, -0.1, 1.0, 0.0], dtype=np.float32),
+        status,
+    )
+
+    assert env._transport_phase_active(status)
+    assert np.isclose(constrained[2], 0.35)
+    assert np.isclose(constrained[0], 0.2)
+    env.close()
+
+
+def test_transport_reward_prefers_stable_carry_height_before_goal() -> None:
+    env = ContactAwareGraspLiftEnv(
+        EnvConfig(
+            task="pick_place_ab",
+            observation_mode="contact",
+            pick_place_transport_height_tolerance=0.015,
+            pick_place_transport_goal_radius=0.06,
+        ),
+        RewardConfig(carry_height_bonus_weight=0.8),
+    )
+    env.reset(seed=0)
+
+    target_clearance = (
+        env.env_config.pick_place_transport_clearance
+        + env.env_config.pick_place_transport_height_tolerance
+    )
+    target_height = PICK_PLACE_START_POS[2] + target_clearance
+    high_height = target_height + 0.04
+
+    env.set_manual_configuration(
+        gripper_xyz=(0.0, 0.0, target_height),
+        finger_positions=(0.048, 0.048),
+        object_position=(0.0, 0.0, target_height),
+    )
+    env._episode_has_lifted_for_transport = True
+    target_status = env._build_task_status(env._get_true_contact_bits())
+    target_potential = env._compute_potential_terms(env._get_true_contact_bits(), target_status)
+
+    env.set_manual_configuration(
+        gripper_xyz=(0.0, 0.0, high_height),
+        finger_positions=(0.048, 0.048),
+        object_position=(0.0, 0.0, high_height),
+    )
+    env._episode_has_lifted_for_transport = True
+    high_status = env._build_task_status(env._get_true_contact_bits())
+    high_potential = env._compute_potential_terms(env._get_true_contact_bits(), high_status)
+
+    assert env._transport_phase_active(target_status)
+    assert target_potential.transport > high_potential.transport
+    env.close()
+
+
 def test_arm_reward_uses_contact_and_alignment_shaping() -> None:
     env = ArmPinchGraspLiftEnv(
         EnvConfig(

@@ -54,6 +54,7 @@ class TaskStatus:
     goal_distance_xy: float = 0.0
     goal_height_error: float = 0.0
     object_speed: float = 0.0
+    object_vertical_speed: float = 0.0
     grasp_alignment_score: float = 0.0
     is_grasped: bool = False
     is_lifted_grasp: bool = False
@@ -157,6 +158,12 @@ def validate_env_config(env_config: EnvConfig) -> None:
         raise ValueError("EnvConfig.pick_place_rest_height_tolerance must be positive.")
     if env_config.pick_place_transport_clearance <= 0.0:
         raise ValueError("EnvConfig.pick_place_transport_clearance must be positive.")
+    if env_config.pick_place_transport_height_tolerance <= 0.0:
+        raise ValueError("EnvConfig.pick_place_transport_height_tolerance must be positive.")
+    if env_config.pick_place_transport_goal_radius <= 0.0:
+        raise ValueError("EnvConfig.pick_place_transport_goal_radius must be positive.")
+    if env_config.transport_z_action_scale <= 0.0 or env_config.transport_z_action_scale > 1.0:
+        raise ValueError("EnvConfig.transport_z_action_scale must be in (0, 1].")
     if env_config.pick_place_settle_speed_threshold <= 0.0:
         raise ValueError("EnvConfig.pick_place_settle_speed_threshold must be positive.")
     cartesian_limit = 0.16
@@ -197,6 +204,10 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         )
         self._lift_target_span = max(1e-6, self._success_height - self._lift_start_height)
         self._grasp_clearance = self._lift_start_height - self._rest_height
+        self._carry_target_clearance = (
+            self.env_config.pick_place_transport_clearance
+            + self.env_config.pick_place_transport_height_tolerance
+        )
         self._pick_place_start_position = np.array(
             [
                 float(self.env_config.pick_place_start_xy[0]),
@@ -402,9 +413,43 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         qpos = self.data.qpos[self._object_qpos_adr : self._object_qpos_adr + 7]
         return qpos[:3].copy(), qpos[3:].copy()
 
+    def _filter_action(self, action: np.ndarray) -> np.ndarray:
+        smoothing = float(np.clip(self.env_config.action_smoothing, 0.0, 0.95))
+        if smoothing <= 0.0:
+            return action
+        filtered = ((1.0 - smoothing) * action) + (smoothing * self._previous_action)
+        return np.clip(filtered, self.action_space.low, self.action_space.high)
+
     def _get_object_linear_velocity(self) -> np.ndarray:
         qvel = self.data.qvel[self._object_qvel_adr : self._object_qvel_adr + 3]
         return qvel.copy()
+
+    def _transport_phase_active(self, task_status: TaskStatus) -> bool:
+        if self.env_config.task != "pick_place_ab":
+            return False
+        transport_ready = bool(
+            self._episode_has_lifted_for_transport
+            or (
+                task_status.is_grasped
+                and task_status.lift_clearance >= self.env_config.pick_place_transport_clearance
+            )
+        )
+        if not transport_ready:
+            return False
+        return task_status.goal_distance_xy > self.env_config.pick_place_transport_goal_radius
+
+    def _apply_transport_phase_action_constraints(
+        self,
+        action: np.ndarray,
+        task_status: TaskStatus,
+    ) -> np.ndarray:
+        if self.env_config.embodiment != "cartesian_gripper":
+            return action
+        if not self._transport_phase_active(task_status):
+            return action
+        constrained = action.copy()
+        constrained[2] = constrained[2] * float(self.env_config.transport_z_action_scale)
+        return constrained
 
     def _get_true_contact_bits(self) -> np.ndarray:
         bits = np.zeros(2, dtype=np.float32)
@@ -497,10 +542,12 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
 
     def _build_task_status(self, true_contact_bits: np.ndarray) -> TaskStatus:
         object_pos, _ = self._get_object_state()
+        object_linear_velocity = self._get_object_linear_velocity()
         any_contact = bool(np.any(true_contact_bits > 0.5))
         dual_contact = bool(np.all(true_contact_bits > 0.5))
         lift_clearance = max(0.0, float(object_pos[2] - self._rest_height))
-        object_speed = float(np.linalg.norm(self._get_object_linear_velocity()))
+        object_speed = float(np.linalg.norm(object_linear_velocity))
+        object_vertical_speed = abs(float(object_linear_velocity[2]))
         grasp_alignment_score = self._compute_grasp_alignment_progress(object_pos)
         is_grasped = (
             dual_contact
@@ -514,6 +561,7 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
                 has_dual_contact=dual_contact,
                 lift_clearance=lift_clearance,
                 object_speed=object_speed,
+                object_vertical_speed=object_vertical_speed,
                 grasp_alignment_score=grasp_alignment_score,
                 is_grasped=is_grasped,
                 is_lifted_grasp=is_lifted_grasp,
@@ -540,6 +588,7 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
             goal_distance_xy=goal_distance_xy,
             goal_height_error=goal_height_error,
             object_speed=object_speed,
+            object_vertical_speed=object_vertical_speed,
             grasp_alignment_score=grasp_alignment_score,
             is_grasped=is_grasped,
             is_lifted_grasp=is_lifted_grasp,
@@ -700,6 +749,20 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         if carry_stage_active:
             transport_progress = float(goal_progress**2)
         transport = self.reward_config.transport_weight * transport_progress
+        if self._transport_phase_active(task_status):
+            carry_height_error = abs(task_status.lift_clearance - self._carry_target_clearance)
+            carry_height_progress = float(
+                np.clip(
+                    1.0
+                    - (
+                        carry_height_error
+                        / max(1e-6, 2.0 * self.env_config.pick_place_transport_height_tolerance)
+                    ),
+                    0.0,
+                    1.0,
+                )
+            )
+            transport += self.reward_config.carry_height_bonus_weight * carry_height_progress
 
         place_progress = 0.0
         if carry_stage_active:
@@ -725,6 +788,17 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
                 goal_zone_progress * place_height_progress * slow_progress
             )
         release_progress = 0.0
+        release_progress += (
+            self.reward_config.release_ready_open_bonus_weight
+            * release_ready_progress
+            * finger_open_progress
+        )
+        release_progress -= (
+            self.reward_config.release_ready_hold_penalty_weight
+            * release_ready_progress
+            * contact_progress
+            * (1.0 - finger_open_progress)
+        )
         if transport_ready and (task_status.is_placed or self._episode_has_placed):
             low_contact_progress = 1.0 - contact_progress
             retreat_height_progress = float(
@@ -736,7 +810,8 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
                 )
             )
             release_progress = (
-                release_ready_progress * finger_open_progress
+                release_progress
+                + release_ready_progress * finger_open_progress
                 + 0.5 * release_ready_progress * low_contact_progress * retreat_height_progress
                 - 0.2
                 * release_ready_progress
@@ -744,7 +819,16 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
                 * (1.0 - finger_open_progress)
             )
             if released_or_locked:
-                release_progress = 1.0
+                release_progress = max(release_progress, 1.0)
+                release_progress += (
+                    self.reward_config.post_release_retreat_bonus_weight
+                    * low_contact_progress
+                    * retreat_height_progress
+                )
+                release_progress -= (
+                    self.reward_config.post_release_recontact_penalty_weight
+                    * contact_progress
+                )
         release = self.reward_config.release_weight * release_progress
 
         settle_progress = 0.0
@@ -811,6 +895,16 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         instability_penalty = self.reward_config.lift_instability_penalty_weight * (
             lifted_contact_gate * (excess_object_speed**2)
         )
+        if self._transport_phase_active(task_status):
+            excess_vertical_speed = max(
+                0.0,
+                float(task_status.object_vertical_speed)
+                - float(self.env_config.pick_place_settle_speed_threshold),
+            )
+            instability_penalty += (
+                self.reward_config.transport_vertical_speed_penalty_weight
+                * (excess_vertical_speed**2)
+            )
         success_bonus = self.reward_config.success_bonus if success else 0.0
         return RewardTerms(
             reach=current_potential.reach - previous_potential.reach,
@@ -1080,6 +1174,9 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         action = np.asarray(action, dtype=np.float32).reshape(self.action_space.shape)
         action = np.clip(action, self.action_space.low, self.action_space.high)
+        action = self._filter_action(action)
+        pre_action_status = self._build_task_status(self._get_true_contact_bits())
+        action = self._apply_transport_phase_action_constraints(action, pre_action_status)
         self._set_targets_from_action(action)
 
         for _ in range(self.env_config.substeps):

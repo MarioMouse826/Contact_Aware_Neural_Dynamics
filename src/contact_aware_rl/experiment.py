@@ -146,6 +146,7 @@ def _build_training_summary(
     output_dir: Path,
     eval_callback: PeriodicEvalCallback,
     test_summary: dict[str, Any] | None,
+    init_checkpoint: str | None,
 ) -> dict[str, Any]:
     best_model_path = (
         str(eval_callback.best_model_path) if eval_callback.best_model_path.exists() else None
@@ -162,6 +163,7 @@ def _build_training_summary(
         "seed": config.train.seed,
         "num_envs": config.train.num_envs,
         "output_dir": str(output_dir),
+        "init_checkpoint_path": init_checkpoint,
         "training_status": eval_callback.training_status,
         "stop_reason": eval_callback.stop_reason,
         "best_model_path": best_model_path,
@@ -204,6 +206,7 @@ def run_training(
     total_timesteps: int | None = None,
     output_root: str | None = None,
     wandb_mode: str | None = None,
+    init_checkpoint: str | Path | None = None,
 ) -> TrainingArtifacts:
     resolved_mode = resolve_mode(mode)
     if not resolved_mode.trainable:
@@ -220,6 +223,9 @@ def run_training(
         run_config.logging.output_root = output_root
     if wandb_mode is not None:
         run_config.logging.wandb_mode = wandb_mode
+    resolved_init_checkpoint = (
+        str(Path(init_checkpoint).resolve()) if init_checkpoint is not None else None
+    )
 
     run = start_wandb_run(
         config=run_config.to_dict(),
@@ -248,6 +254,7 @@ def run_training(
             "run_id": run_id,
             "seed": run_config.train.seed,
             "num_envs": run_config.train.num_envs,
+            "init_checkpoint_path": resolved_init_checkpoint,
             "wandb_entity": run_config.logging.wandb_entity,
             "wandb_project": run_config.logging.wandb_project,
         }
@@ -257,22 +264,30 @@ def run_training(
         monitor_env = _build_eval_env(run_config)
         validation_env = _build_eval_env(run_config)
 
-        model = SAC(
-            "MlpPolicy",
-            training_env,
-            learning_rate=run_config.train.learning_rate,
-            buffer_size=run_config.train.buffer_size,
-            learning_starts=run_config.train.learning_starts,
-            batch_size=run_config.train.batch_size,
-            gamma=run_config.train.gamma,
-            tau=run_config.train.tau,
-            train_freq=(run_config.train.train_freq, "step"),
-            gradient_steps=run_config.train.gradient_steps,
-            policy_kwargs={"net_arch": list(run_config.train.net_arch)},
-            seed=run_config.train.seed,
-            verbose=1,
-            device=run_config.train.device,
-        )
+        if resolved_init_checkpoint is None:
+            model = SAC(
+                "MlpPolicy",
+                training_env,
+                learning_rate=run_config.train.learning_rate,
+                buffer_size=run_config.train.buffer_size,
+                learning_starts=run_config.train.learning_starts,
+                batch_size=run_config.train.batch_size,
+                gamma=run_config.train.gamma,
+                tau=run_config.train.tau,
+                train_freq=(run_config.train.train_freq, "step"),
+                gradient_steps=run_config.train.gradient_steps,
+                policy_kwargs={"net_arch": list(run_config.train.net_arch)},
+                seed=run_config.train.seed,
+                verbose=1,
+                device=run_config.train.device,
+            )
+        else:
+            model = SAC.load(
+                resolved_init_checkpoint,
+                env=training_env,
+                device=run_config.train.device,
+            )
+            model.set_random_seed(run_config.train.seed)
 
         logger = configure_logger(str(logs_dir), ["stdout", "csv", "json", "tensorboard"])
         model.set_logger(logger)
@@ -337,6 +352,7 @@ def run_training(
             output_dir=output_dir,
             eval_callback=eval_callback,
             test_summary=test_summary,
+            init_checkpoint=resolved_init_checkpoint,
         )
         save_json(summary, summary_path)
         save_wandb_files(

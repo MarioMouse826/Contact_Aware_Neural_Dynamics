@@ -79,6 +79,31 @@ For a short local smoke run of the sweep machinery:
 python scripts/run_arm_closed_loop_sweep.py --wandb-mode disabled --max-runs 1 --num-envs 1 --total-timesteps 1000 --allow-incomplete
 ```
 
+For the arm clean-release warm-start sweep from the `iconic-haze-72` checkpoint,
+choose the config that matches the checkpoint action space:
+
+```bash
+python scripts/run_arm_clean_release_sweep.py \
+  --config configs/arm_clean_release_joint.yaml \
+  --init-checkpoint <path-to-iconic-haze-72-model.zip> \
+  --wandb-mode online
+```
+
+Use `configs/arm_clean_release_ee.yaml` only for checkpoints trained with
+`arm_control_mode: ee_delta`. The sweep requires the checkpoint path and runs
+every default recipe through both `warm` and `continue` stages. Add
+`--stop-on-target` only when you want a shorter scout run that exits after the
+first strict validation success.
+
+Single-run warm starts are also supported:
+
+```bash
+python -m contact_aware_rl.train \
+  --config configs/arm_clean_release_joint.yaml \
+  --mode contact \
+  --init-checkpoint <path-to-iconic-haze-72-model.zip>
+```
+
 For the stabilized Cartesian release-corridor experiment:
 
 ```bash

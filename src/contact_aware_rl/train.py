@@ -27,6 +27,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--total-timesteps", type=int, default=None)
     parser.add_argument("--output-root", default=None)
     parser.add_argument("--wandb-mode", default=None)
+    parser.add_argument("--init-checkpoint", default=None)
     return parser
 
 
@@ -41,6 +42,7 @@ def main() -> None:
         total_timesteps=args.total_timesteps,
         output_root=args.output_root,
         wandb_mode=args.wandb_mode,
+        init_checkpoint=args.init_checkpoint,
     )
     print(
         json.dumps(

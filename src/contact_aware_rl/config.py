@@ -19,6 +19,8 @@ class EnvConfig:
     substeps: int = 10
     action_scale_xyz: float = 0.015
     action_scale_grip: float = 0.01
+    action_smoothing: float = 0.0
+    transport_z_action_scale: float = 1.0
     arm_joint_delta_scales: list[float] = field(
         default_factory=lambda: [0.08, 0.08, 0.08, 0.08]
     )
@@ -39,6 +41,8 @@ class EnvConfig:
     pick_place_goal_tolerance_xy: float = 0.03
     pick_place_rest_height_tolerance: float = 0.012
     pick_place_transport_clearance: float = 0.04
+    pick_place_transport_height_tolerance: float = 0.015
+    pick_place_transport_goal_radius: float = 0.06
     pick_place_settle_speed_threshold: float = 0.05
     grasp_alignment_threshold: float = 0.08
     pick_place_goal_hold_steps: int = 10
@@ -72,6 +76,12 @@ class RewardConfig:
     action_delta_penalty_weight: float = 0.02
     lift_instability_penalty_weight: float = 0.5
     lift_instability_speed_threshold: float = 0.12
+    carry_height_bonus_weight: float = 0.0
+    transport_vertical_speed_penalty_weight: float = 0.0
+    release_ready_open_bonus_weight: float = 0.0
+    release_ready_hold_penalty_weight: float = 0.0
+    post_release_retreat_bonus_weight: float = 0.0
+    post_release_recontact_penalty_weight: float = 0.0
 
 
 @dataclass

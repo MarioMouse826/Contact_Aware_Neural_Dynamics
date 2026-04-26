@@ -408,6 +408,89 @@ def test_arm_ee_delta_action_respects_joint_clamps_and_ranges() -> None:
     env.close()
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("transport_z_action_scale", 0.0, "transport_z_action_scale"),
+        ("pick_place_transport_height_tolerance", 0.0, "transport_height_tolerance"),
+        ("pick_place_transport_goal_radius", 0.0, "transport_goal_radius"),
+    ],
+)
+def test_pick_place_clean_release_config_validation(
+    field: str,
+    value: float,
+    message: str,
+) -> None:
+    kwargs = {
+        "embodiment": "arm_pinch",
+        "task": "pick_place_ab",
+        "observation_mode": "contact",
+        field: value,
+    }
+
+    with pytest.raises(ValueError, match=message):
+        ArmPinchGraspLiftEnv(EnvConfig(**kwargs), RewardConfig())
+
+
+def test_arm_ee_transport_constraints_reduce_vertical_command() -> None:
+    env = ArmPinchGraspLiftEnv(
+        EnvConfig(
+            embodiment="arm_pinch",
+            task="pick_place_ab",
+            observation_mode="contact",
+            arm_control_mode="ee_delta",
+            transport_z_action_scale=0.5,
+        ),
+        RewardConfig(),
+    )
+    env.reset(seed=0)
+    env._episode_has_lifted_for_transport = True
+    status = TaskStatus(
+        lift_clearance=0.06,
+        goal_distance_xy=0.20,
+        goal_height_error=0.06,
+        has_any_contact=True,
+    )
+
+    constrained = env._apply_transport_phase_action_constraints(
+        np.array([0.2, -0.1, 1.0, 0.3], dtype=np.float32),
+        status,
+    )
+
+    assert env._transport_phase_active(status)
+    assert np.isclose(constrained[2], 0.5)
+    assert np.isclose(constrained[0], 0.2)
+    env.close()
+
+
+def test_arm_joint_transport_constraints_do_not_scale_joint_action() -> None:
+    env = ArmPinchGraspLiftEnv(
+        EnvConfig(
+            embodiment="arm_pinch",
+            task="pick_place_ab",
+            observation_mode="contact",
+            arm_control_mode="joint_delta",
+            transport_z_action_scale=0.5,
+        ),
+        RewardConfig(),
+    )
+    env.reset(seed=0)
+    env._episode_has_lifted_for_transport = True
+    status = TaskStatus(
+        lift_clearance=0.06,
+        goal_distance_xy=0.20,
+        goal_height_error=0.06,
+        has_any_contact=True,
+    )
+
+    action = np.array([0.2, -0.1, 1.0, 0.3, -0.4], dtype=np.float32)
+    constrained = env._apply_transport_phase_action_constraints(action, status)
+
+    assert env._transport_phase_active(status)
+    assert np.allclose(constrained, action)
+    env.close()
+
+
 def test_cartesian_reward_potential_increases_with_two_finger_contact_and_lift() -> None:
     env = create_env(embodiment="cartesian_gripper", task="grasp_lift")
 
@@ -803,6 +886,49 @@ def test_arm_pick_place_transport_potential_grows_after_lift_latch() -> None:
     env.close()
 
 
+def test_arm_transport_reward_prefers_stable_carry_height_before_goal() -> None:
+    env = ArmPinchGraspLiftEnv(
+        EnvConfig(
+            embodiment="arm_pinch",
+            task="pick_place_ab",
+            observation_mode="contact",
+            pick_place_transport_height_tolerance=0.015,
+            pick_place_transport_goal_radius=0.06,
+        ),
+        RewardConfig(transport_weight=10.0, carry_height_bonus_weight=0.8),
+    )
+    env.reset(seed=0)
+    env._episode_has_lifted_for_transport = True
+    goal_distance = float(
+        np.linalg.norm(np.asarray(PICK_PLACE_START_POS[:2]) - np.asarray(PICK_PLACE_GOAL_POS[:2]))
+    )
+    target_clearance = (
+        env.env_config.pick_place_transport_clearance
+        + env.env_config.pick_place_transport_height_tolerance
+    )
+    true_bits = np.array([1.0, 0.0], dtype=np.float32)
+
+    target_status = TaskStatus(
+        has_any_contact=True,
+        lift_clearance=target_clearance,
+        goal_distance_xy=goal_distance,
+        goal_height_error=target_clearance,
+    )
+    target_potential = env._compute_potential_terms(true_bits, target_status)
+
+    high_status = TaskStatus(
+        has_any_contact=True,
+        lift_clearance=target_clearance + 0.04,
+        goal_distance_xy=goal_distance,
+        goal_height_error=target_clearance + 0.04,
+    )
+    high_potential = env._compute_potential_terms(true_bits, high_status)
+
+    assert env._transport_phase_active(target_status)
+    assert target_potential.transport > high_potential.transport
+    env.close()
+
+
 def test_arm_pick_place_carry_stage_requires_current_carry_state_after_lift_latch() -> None:
     env = ArmPinchGraspLiftEnv(
         EnvConfig(
@@ -1076,6 +1202,53 @@ def test_pick_place_release_corridor_rewards_opening_before_full_detach() -> Non
     assert held_status.is_placed
     assert opened_status.is_placed
     assert opened_potential.release > held_potential.release
+    env.close()
+
+
+def test_arm_release_ready_zone_rewards_opening_before_full_release() -> None:
+    env = ArmPinchGraspLiftEnv(
+        EnvConfig(
+            embodiment="arm_pinch",
+            task="pick_place_ab",
+            observation_mode="contact",
+            max_episode_steps=250,
+        ),
+        RewardConfig(
+            release_weight=2.0,
+            release_ready_open_bonus_weight=0.25,
+            release_ready_hold_penalty_weight=0.08,
+        ),
+    )
+    env.reset(seed=0)
+    env._episode_has_lifted_for_transport = True
+    env._episode_has_over_goal = True
+    status = TaskStatus(
+        has_any_contact=True,
+        has_dual_contact=True,
+        lift_clearance=0.0,
+        goal_distance_xy=0.0,
+        goal_height_error=0.0,
+        object_speed=0.0,
+        is_over_goal=True,
+        is_placed=True,
+    )
+    true_bits = np.array([1.0, 1.0], dtype=np.float32)
+
+    env.set_manual_configuration(
+        arm_joint_positions=np.asarray(env.env_config.initial_arm_joint_positions, dtype=np.float64),
+        finger_positions=(0.03, 0.03),
+        object_position=PICK_PLACE_GOAL_POS,
+    )
+    held_potential = env._compute_potential_terms(true_bits, status)
+
+    env.set_manual_configuration(
+        arm_joint_positions=np.asarray(env.env_config.initial_arm_joint_positions, dtype=np.float64),
+        finger_positions=(0.0, 0.0),
+        object_position=PICK_PLACE_GOAL_POS,
+    )
+    opening_potential = env._compute_potential_terms(true_bits, status)
+
+    assert opening_potential.release > held_potential.release
     env.close()
 
 

@@ -52,13 +52,15 @@ def _config_type_tag(env_config: EnvConfig) -> str:
 
 
 def _build_wandb_tags(config: ExperimentConfig, *, mode: str) -> list[str]:
-    return [
+    tags = [
         mode,
         f"task:{config.env.task}",
         f"config:{_config_type_tag(config.env)}",
         f"seed:{config.train.seed}",
         f"envs:{config.train.num_envs}",
     ]
+    tags.extend(str(tag) for tag in config.logging.wandb_tags)
+    return tags
 
 
 @dataclass

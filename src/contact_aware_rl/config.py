@@ -22,6 +22,8 @@ class EnvConfig:
     arm_joint_delta_scales: list[float] = field(
         default_factory=lambda: [0.08, 0.08, 0.08, 0.08]
     )
+    arm_control_mode: str = "joint_delta"
+    arm_ik_damping: float = 1e-3
     table_height: float = 0.05
     success_height_over_table: float = 0.08
     success_hold_steps: int = 10
@@ -151,6 +153,7 @@ class LoggingConfig:
     gradient_save_freq: int = 0
     model_save_freq: int = 0
     output_root: str = "outputs"
+    wandb_tags: list[str] = field(default_factory=list)
 
 
 @dataclass

@@ -53,6 +53,51 @@ python -m contact_aware_rl.train --config configs/arm_box.yaml --mode contact --
 
 `configs/arm_box.yaml` is the intended arm pick-place entry point. It uses an arm home pose near the pick-place start marker plus stronger pre-lift grasp/lift shaping than the generic defaults.
 
+The corrected articulated-arm place-priority run uses closed-loop end-effector control:
+
+```bash
+python -m contact_aware_rl.train --config configs/arm_ee_place_priority.yaml --mode contact
+```
+
+The older joint-space arm reproduction config remains available for diagnosis:
+
+```bash
+python -m contact_aware_rl.train --config configs/arm_place_priority.yaml --mode contact
+```
+
+Compare against the staged pick-place metrics from `3rfnpbbk`: transport-ready rate around `0.64`, over-goal rate around `0.64`, placement rate around `0.53`, and mean best goal distance around `0.13`.
+
+For the overnight closed-loop arm sweep:
+
+```bash
+python scripts/run_arm_closed_loop_sweep.py --wandb-mode online
+```
+
+For a short local smoke run of the sweep machinery:
+
+```bash
+python scripts/run_arm_closed_loop_sweep.py --wandb-mode disabled --max-runs 1 --num-envs 1 --total-timesteps 1000 --allow-incomplete
+```
+
+For the stabilized Cartesian release-corridor experiment:
+
+```bash
+python -m contact_aware_rl.train --config configs/cartesian_place_priority_release_stabilized.yaml --mode contact --seed 0 --num-envs 1
+```
+
+This runs a warmup stage to select `best_success_model.zip`, then resumes from that policy with lower learning rate and fixed entropy for late-training stabilization.
+
+For the next Cartesian release-corridor improvement sweep against the `glamorous-plant-49` baseline, use:
+
+```bash
+python -m contact_aware_rl.train --config configs/cartesian_place_priority_release_glamorous_repro_selector.yaml --mode contact
+python -m contact_aware_rl.train --config configs/cartesian_place_priority_release_post_release_stability.yaml --mode contact
+python -m contact_aware_rl.train --config configs/cartesian_place_priority_release_long_horizon.yaml --mode contact
+python -m contact_aware_rl.train --config configs/cartesian_place_priority_release_combined_stability_horizon.yaml --mode contact
+```
+
+These variants keep the original release-corridor task/evaluation criteria, use `num_envs=12` and one million timesteps, and select `best_model.zip` by task-completion score instead of strict success rate alone.
+
 For the legacy articulated arm lift-only task:
 
 ```bash
@@ -83,7 +128,7 @@ python -m contact_aware_rl.sweep --suite proposal --seeds 0 1 2 --num-envs 1
 python watch_ai.py --model-path outputs/<run-id>/best_model.zip --split validation
 ```
 
-This writes an MP4 to `videos/<run-id>.mp4` and records the split/base seed in the output JSON. Every run emits `best_model.zip`; `best_success_model.zip` is still only written after nonzero validation success.
+This writes an MP4 to `videos/<run-id>.mp4` and records the split/base seed in the output JSON. Every run emits `best_model.zip` and `latest_model.zip`; `best_success_model.zip` is still only written after nonzero validation success.
 
 ## Tests
 

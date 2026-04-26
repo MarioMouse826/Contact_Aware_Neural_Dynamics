@@ -15,6 +15,7 @@ SUPPORTED_EMBODIMENTS = {"cartesian_gripper", "arm_pinch"}
 SUPPORTED_TASKS = {"grasp_lift", "pick_place_ab"}
 SUPPORTED_OBSERVATION_MODES = {"baseline", "contact"}
 SUPPORTED_CONTACT_OVERRIDES = {None, "ones", "zeros"}
+SUPPORTED_ARM_CONTROL_MODES = {"joint_delta", "ee_delta"}
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,13 @@ def validate_env_config(env_config: EnvConfig) -> None:
         raise ValueError(
             "EnvConfig.arm_joint_delta_scales must contain exactly four values."
         )
+    if env_config.arm_control_mode not in SUPPORTED_ARM_CONTROL_MODES:
+        raise ValueError(
+            f"Unsupported arm control mode '{env_config.arm_control_mode}'. "
+            f"Expected one of {sorted(SUPPORTED_ARM_CONTROL_MODES)}."
+        )
+    if env_config.arm_ik_damping <= 0.0:
+        raise ValueError("EnvConfig.arm_ik_damping must be positive.")
     if len(env_config.initial_arm_joint_positions) != 4:
         raise ValueError(
             "EnvConfig.initial_arm_joint_positions must contain exactly four values."
@@ -662,10 +670,19 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         )
         placed_or_locked = bool(task_status.is_placed or self._episode_has_placed)
         released_or_locked = bool(task_status.is_released or self._episode_has_released)
-        carry_stage_active = bool(
-            transport_ready
-            and (task_status.is_grasped or placed_or_locked or released_or_locked)
-        )
+        if self.env_config.embodiment == "arm_pinch":
+            arm_carry_state = bool(
+                task_status.is_grasped
+                or task_status.has_any_contact
+                or placed_or_locked
+                or released_or_locked
+            )
+            carry_stage_active = bool(transport_ready and arm_carry_state)
+        else:
+            carry_stage_active = bool(
+                transport_ready
+                and (task_status.is_grasped or placed_or_locked or released_or_locked)
+            )
         transport_ready_gate = 1.0 if carry_stage_active else 0.0
         contact = (
             self.reward_config.contact_weight
@@ -686,7 +703,7 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
             np.clip(start_distance_xy / self._pick_place_goal_span, 0.0, 1.0)
         )
         start_stability = 0.0
-        if not (task_status.is_lifted_grasp or self._episode_has_lifted_grasp):
+        if not transport_ready:
             start_stability = (
                 -self.reward_config.start_stability_weight * start_displacement_progress
             )
@@ -698,7 +715,10 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
 
         transport_progress = 0.0
         if carry_stage_active:
-            transport_progress = float(goal_progress**2)
+            if self.env_config.embodiment == "arm_pinch":
+                transport_progress = goal_progress
+            else:
+                transport_progress = float(goal_progress**2)
         transport = self.reward_config.transport_weight * transport_progress
 
         place_progress = 0.0
@@ -869,7 +889,7 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         if task_status.is_lifted_grasp:
             self._episode_has_lifted_grasp = True
         if (
-            self._episode_has_grasped
+            task_status.is_grasped
             and task_status.lift_clearance >= self.env_config.pick_place_transport_clearance
         ):
             self._episode_has_lifted_for_transport = True
@@ -1387,6 +1407,8 @@ class ArmPinchGraspLiftEnv(BaseContactAwareEnv):
         ]
 
     def _action_size(self) -> int:
+        if self.env_config.arm_control_mode == "ee_delta":
+            return 4
         return 5
 
     def _build_mjcf(self) -> str:
@@ -1506,6 +1528,10 @@ class ArmPinchGraspLiftEnv(BaseContactAwareEnv):
 """
 
     def _set_targets_from_action(self, action: np.ndarray) -> None:
+        if self.env_config.arm_control_mode == "ee_delta":
+            self._set_targets_from_ee_delta_action(action)
+            return
+
         joint_scales = np.asarray(
             self.env_config.arm_joint_delta_scales,
             dtype=np.float64,
@@ -1518,6 +1544,50 @@ class ArmPinchGraspLiftEnv(BaseContactAwareEnv):
                 action[3] * joint_scales[3],
                 action[4] * self.env_config.action_scale_grip,
                 action[4] * self.env_config.action_scale_grip,
+            ],
+            dtype=np.float64,
+        )
+        self._target_ctrl = np.clip(self._target_ctrl + deltas, self._ctrl_low, self._ctrl_high)
+        self.data.ctrl[:] = self._target_ctrl
+
+    def _set_targets_from_ee_delta_action(self, action: np.ndarray) -> None:
+        requested_delta = np.asarray(action[:3], dtype=np.float64) * float(
+            self.env_config.action_scale_xyz
+        )
+        joint_scales = np.asarray(
+            self.env_config.arm_joint_delta_scales,
+            dtype=np.float64,
+        )
+
+        jacp_left = np.zeros((3, self.model.nv), dtype=np.float64)
+        jacr_left = np.zeros((3, self.model.nv), dtype=np.float64)
+        jacp_right = np.zeros((3, self.model.nv), dtype=np.float64)
+        jacr_right = np.zeros((3, self.model.nv), dtype=np.float64)
+        mujoco.mj_jacSite(self.model, self.data, jacp_left, jacr_left, self._left_tip_site_id)
+        mujoco.mj_jacSite(
+            self.model,
+            self.data,
+            jacp_right,
+            jacr_right,
+            self._right_tip_site_id,
+        )
+
+        fingertip_jacobian = 0.5 * (jacp_left + jacp_right)
+        arm_jacobian = fingertip_jacobian[:, self._controlled_qvel_adr[:4]]
+        damping = float(self.env_config.arm_ik_damping)
+        damped_system = (arm_jacobian @ arm_jacobian.T) + damping * np.eye(3)
+        joint_delta = arm_jacobian.T @ np.linalg.solve(damped_system, requested_delta)
+        joint_delta = np.clip(joint_delta, -joint_scales, joint_scales)
+
+        finger_delta = action[3] * self.env_config.action_scale_grip
+        deltas = np.array(
+            [
+                joint_delta[0],
+                joint_delta[1],
+                joint_delta[2],
+                joint_delta[3],
+                finger_delta,
+                finger_delta,
             ],
             dtype=np.float64,
         )

@@ -1,10 +1,15 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "contact-aware-neural-dynamics"
 version = "0.1.0"
-description = "Add your description here"
+description = "Contact-aware SAC experiments for tabletop manipulation in MuJoCo."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
+    "gymnasium>=1.2.1",
     "ipykernel>=6.31.0",
     "mujoco>=3.5.0",
     "numpy>=2.0.2",
@@ -14,3 +19,14 @@ dependencies = [
     "torch>=2.8.0",
     "wandb>=0.25.1",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,100 @@
+env:
+  embodiment: cartesian_gripper
+  task: pick_place_ab
+  max_episode_steps: 250
+  substeps: 10
+  action_scale_xyz: 0.02
+  action_scale_grip: 0.01
+  action_smoothing: 0.0
+  transport_z_action_scale: 0.35
+  table_height: 0.05
+  success_height_over_table: 0.08
+  success_hold_steps: 10
+  termination_drop_margin: 0.03
+  reset_object_xy_range: 0.035
+  reset_object_yaw_range: 0.5235987755982988
+  reset_gripper_xy_noise: 0.025
+  reset_gripper_z_noise: 0.01
+  pick_place_start_xy: [-0.12, -0.12]
+  pick_place_goal_xy: [0.12, 0.12]
+  pick_place_object_yaw: 0.0
+  pick_place_goal_tolerance_xy: 0.03
+  pick_place_rest_height_tolerance: 0.012
+  pick_place_transport_clearance: 0.04
+  pick_place_transport_height_tolerance: 0.015
+  pick_place_transport_goal_radius: 0.06
+  pick_place_settle_speed_threshold: 0.05
+  grasp_alignment_threshold: 0.08
+  pick_place_goal_hold_steps: 10
+  initial_gripper_height: 0.16
+  initial_finger_position: 0.0
+  object_half_extents: [0.025, 0.025, 0.03]
+  object_mass: 0.03
+  object_friction: [1.2, 0.05, 0.01]
+  finger_friction: [1.8, 0.08, 0.015]
+
+reward:
+  reach_weight: 1.0
+  contact_weight: 0.25
+  grasp_alignment_weight: 0.5
+  start_stability_weight: 2.0
+  lift_weight: 8.0
+  transport_weight: 3.0
+  place_weight: 4.0
+  release_weight: 2.5
+  settle_weight: 3.0
+  hold_weight: 2.0
+  success_bonus: 10.0
+  action_penalty_weight: 0.02
+  action_delta_penalty_weight: 0.02
+  lift_instability_penalty_weight: 0.5
+  lift_instability_speed_threshold: 0.12
+  carry_height_bonus_weight: 0.8
+  transport_vertical_speed_penalty_weight: 1.2
+  release_ready_open_bonus_weight: 0.18
+  release_ready_hold_penalty_weight: 0.06
+  post_release_retreat_bonus_weight: 0.12
+  post_release_recontact_penalty_weight: 0.16
+
+train:
+  seed: 0
+  num_envs: 12
+  total_timesteps: 400000
+  learning_rate: 0.0003
+  buffer_size: 1000000
+  learning_starts: 10000
+  batch_size: 256
+  gamma: 0.99
+  tau: 0.005
+  train_freq: 1
+  gradient_steps: 1
+  net_arch: [256, 256]
+  eval_freq: 25000
+  checkpoint_freq: 100000
+  early_stop_success_rate: 0.8
+  early_stop_success_patience: 2
+  early_stop_plateau_patience: 5
+  early_stop_plateau_start_timesteps: 150000
+  device: auto
+
+eval:
+  deterministic: true
+  monitor:
+    episodes: 20
+    seed_offset: 10000
+  validation:
+    episodes: 100
+    seed_offset: 20000
+  test:
+    episodes: 100
+    seed_offset: 30000
+
+logging:
+  wandb_entity: contact-aware-rl
+  wandb_project: contact-aware-neural-dynamics
+  wandb_mode: online
+  sync_tensorboard: true
+  save_code: true
+  gradient_save_freq: 0
+  model_save_freq: 0
+  output_root: outputs\clean_release

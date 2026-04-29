@@ -1,0 +1,8 @@
+env:
+  embodiment: arm_pinch
+  task: grasp_lift
+  initial_arm_joint_positions: [-0.01, 0.46, -0.97, -1.68]
+  reset_arm_joint_noise: 0.04
+
+reward:
+  contact_weight: 0.0

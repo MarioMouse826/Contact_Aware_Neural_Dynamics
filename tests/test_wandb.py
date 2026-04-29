@@ -87,3 +87,13 @@ def test_build_wandb_tags_include_task_and_config_type(
         "seed:7",
         "envs:3",
     ]
+
+
+def test_build_wandb_tags_appends_configured_tags() -> None:
+    config = ExperimentConfig()
+    config.logging.wandb_tags = ["arm-closed-loop-sweep", "variant:ee_nominal"]
+
+    assert _build_wandb_tags(config, mode="contact")[-2:] == [
+        "arm-closed-loop-sweep",
+        "variant:ee_nominal",
+    ]

@@ -15,6 +15,8 @@ SUPPORTED_EMBODIMENTS = {"cartesian_gripper", "arm_pinch"}
 SUPPORTED_TASKS = {"grasp_lift", "pick_place_ab"}
 SUPPORTED_OBSERVATION_MODES = {"baseline", "contact"}
 SUPPORTED_CONTACT_OVERRIDES = {None, "ones", "zeros"}
+SUPPORTED_ARM_CONTROL_MODES = {"joint_delta", "ee_delta"}
+SUPPORTED_OBJECT_SHAPES = {"box", "sphere", "cylinder", "triangular_prism"}
 
 
 @dataclass(frozen=True)
@@ -133,6 +135,26 @@ def validate_env_config(env_config: EnvConfig) -> None:
         raise ValueError(
             "EnvConfig.arm_joint_delta_scales must contain exactly four values."
         )
+    if env_config.arm_control_mode not in SUPPORTED_ARM_CONTROL_MODES:
+        raise ValueError(
+            f"Unsupported arm control mode '{env_config.arm_control_mode}'. "
+            f"Expected one of {sorted(SUPPORTED_ARM_CONTROL_MODES)}."
+        )
+    if env_config.arm_ik_damping <= 0.0:
+        raise ValueError("EnvConfig.arm_ik_damping must be positive.")
+    if env_config.object_shape not in SUPPORTED_OBJECT_SHAPES:
+        raise ValueError(
+            f"Unsupported object shape '{env_config.object_shape}'. "
+            f"Expected one of {sorted(SUPPORTED_OBJECT_SHAPES)}."
+        )
+    if len(env_config.object_half_extents) != 3:
+        raise ValueError("EnvConfig.object_half_extents must contain exactly three values.")
+    if any(float(value) <= 0.0 for value in env_config.object_half_extents):
+        raise ValueError("EnvConfig.object_half_extents values must be positive.")
+    if env_config.object_radius is not None and float(env_config.object_radius) <= 0.0:
+        raise ValueError("EnvConfig.object_radius must be positive when provided.")
+    if env_config.object_mass <= 0.0:
+        raise ValueError("EnvConfig.object_mass must be positive.")
     if len(env_config.initial_arm_joint_positions) != 4:
         raise ValueError(
             "EnvConfig.initial_arm_joint_positions must contain exactly four values."
@@ -195,9 +217,7 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         self.reward_config = reward_config or RewardConfig()
         validate_env_config(self.env_config)
 
-        self._rest_height = (
-            self.env_config.table_height + self.env_config.object_half_extents[2]
-        )
+        self._rest_height = self.env_config.table_height + self._object_half_height()
         self._lift_start_height = self._rest_height + 0.01
         self._success_height = (
             self.env_config.table_height + self.env_config.success_height_over_table
@@ -330,6 +350,68 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
     def _build_mjcf(self) -> str:
         raise NotImplementedError
 
+    def _format_mjcf_values(self, values: list[float] | tuple[float, ...]) -> str:
+        return " ".join(f"{value:.5f}" for value in values)
+
+    def _object_radius(self) -> float:
+        if self.env_config.object_radius is not None:
+            return float(self.env_config.object_radius)
+        return float(max(self.env_config.object_half_extents[0], self.env_config.object_half_extents[1]))
+
+    def _object_half_height(self) -> float:
+        if self.env_config.object_shape == "sphere":
+            return self._object_radius()
+        return float(self.env_config.object_half_extents[2])
+
+    def _build_object_asset_xml(self) -> str:
+        if self.env_config.object_shape != "triangular_prism":
+            return ""
+
+        radius = self._object_radius()
+        half_height = self._object_half_height()
+        angles = (math.pi / 2.0, (7.0 * math.pi) / 6.0, (11.0 * math.pi) / 6.0)
+        vertices: list[float] = []
+        for z in (-half_height, half_height):
+            for angle in angles:
+                vertices.extend([radius * math.cos(angle), radius * math.sin(angle), z])
+        vertex_values = self._format_mjcf_values(tuple(vertices))
+        face_values = "0 2 1 3 4 5 0 1 4 0 4 3 1 2 5 1 5 4 2 0 3 2 3 5"
+        return f"""
+  <asset>
+    <mesh name="triangular_prism_mesh" vertex="{vertex_values}" face="{face_values}"/>
+  </asset>
+"""
+
+    def _build_object_geom_xml(self) -> str:
+        object_friction = self._format_mjcf_values(tuple(self.env_config.object_friction))
+        shared_attrs = f"""
+        name="object_geom"
+        mass="{self.env_config.object_mass:.5f}"
+        friction="{object_friction}"
+        rgba="0.2 0.45 0.85 1"
+"""
+        object_shape = self.env_config.object_shape
+        if object_shape == "box":
+            object_size = self._format_mjcf_values(tuple(self.env_config.object_half_extents))
+            shape_attrs = f'type="box"\n        size="{object_size}"'
+        elif object_shape == "sphere":
+            shape_attrs = f'type="sphere"\n        size="{self._object_radius():.5f}"'
+        elif object_shape == "cylinder":
+            shape_attrs = (
+                'type="cylinder"\n'
+                f'        size="{self._object_radius():.5f} {self._object_half_height():.5f}"'
+            )
+        elif object_shape == "triangular_prism":
+            shape_attrs = 'type="mesh"\n        mesh="triangular_prism_mesh"'
+        else:
+            raise ValueError(f"Unsupported object shape '{object_shape}'.")
+
+        return f"""
+      <geom
+{shared_attrs}        {shape_attrs}
+      />
+"""
+
     def _set_targets_from_action(self, action: np.ndarray) -> None:
         raise NotImplementedError
 
@@ -443,13 +525,20 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         action: np.ndarray,
         task_status: TaskStatus,
     ) -> np.ndarray:
-        if self.env_config.embodiment != "cartesian_gripper":
-            return action
         if not self._transport_phase_active(task_status):
             return action
-        constrained = action.copy()
-        constrained[2] = constrained[2] * float(self.env_config.transport_z_action_scale)
-        return constrained
+        if self.env_config.embodiment == "cartesian_gripper":
+            constrained = action.copy()
+            constrained[2] = constrained[2] * float(self.env_config.transport_z_action_scale)
+            return constrained
+        if (
+            self.env_config.embodiment == "arm_pinch"
+            and self.env_config.arm_control_mode == "ee_delta"
+        ):
+            constrained = action.copy()
+            constrained[2] = constrained[2] * float(self.env_config.transport_z_action_scale)
+            return constrained
+        return action
 
     def _get_true_contact_bits(self) -> np.ndarray:
         bits = np.zeros(2, dtype=np.float32)
@@ -711,10 +800,19 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         )
         placed_or_locked = bool(task_status.is_placed or self._episode_has_placed)
         released_or_locked = bool(task_status.is_released or self._episode_has_released)
-        carry_stage_active = bool(
-            transport_ready
-            and (task_status.is_grasped or placed_or_locked or released_or_locked)
-        )
+        if self.env_config.embodiment == "arm_pinch":
+            arm_carry_state = bool(
+                task_status.is_grasped
+                or task_status.has_any_contact
+                or placed_or_locked
+                or released_or_locked
+            )
+            carry_stage_active = bool(transport_ready and arm_carry_state)
+        else:
+            carry_stage_active = bool(
+                transport_ready
+                and (task_status.is_grasped or placed_or_locked or released_or_locked)
+            )
         transport_ready_gate = 1.0 if carry_stage_active else 0.0
         contact = (
             self.reward_config.contact_weight
@@ -735,7 +833,7 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
             np.clip(start_distance_xy / self._pick_place_goal_span, 0.0, 1.0)
         )
         start_stability = 0.0
-        if not (task_status.is_lifted_grasp or self._episode_has_lifted_grasp):
+        if not transport_ready:
             start_stability = (
                 -self.reward_config.start_stability_weight * start_displacement_progress
             )
@@ -747,7 +845,10 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
 
         transport_progress = 0.0
         if carry_stage_active:
-            transport_progress = float(goal_progress**2)
+            if self.env_config.embodiment == "arm_pinch":
+                transport_progress = goal_progress
+            else:
+                transport_progress = float(goal_progress**2)
         transport = self.reward_config.transport_weight * transport_progress
         if self._transport_phase_active(task_status):
             carry_height_error = abs(task_status.lift_clearance - self._carry_target_clearance)
@@ -963,7 +1064,7 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
         if task_status.is_lifted_grasp:
             self._episode_has_lifted_grasp = True
         if (
-            self._episode_has_grasped
+            task_status.is_grasped
             and task_status.lift_clearance >= self.env_config.pick_place_transport_clearance
         ):
             self._episode_has_lifted_for_transport = True
@@ -1118,8 +1219,10 @@ class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
             [math.cos(object_yaw / 2.0), 0.0, 0.0, math.sin(object_yaw / 2.0)],
             dtype=np.float64,
         )
-        object_z = self.env_config.table_height + self.env_config.object_half_extents[2]
-        object_position = np.array([object_x, object_y, object_z], dtype=np.float64)
+        object_position = np.array(
+            [object_x, object_y, self._rest_height],
+            dtype=np.float64,
+        )
         return object_position, object_quat
 
     def reset(
@@ -1258,15 +1361,11 @@ class ContactAwareGraspLiftEnv(BaseContactAwareEnv):
         return 4
 
     def _build_mjcf(self) -> str:
-        object_half_extents = " ".join(
-            f"{value:.5f}" for value in self.env_config.object_half_extents
-        )
-        object_friction = " ".join(
-            f"{value:.5f}" for value in self.env_config.object_friction
-        )
         finger_friction = " ".join(
             f"{value:.5f}" for value in self.env_config.finger_friction
         )
+        object_asset_xml = self._build_object_asset_xml()
+        object_geom_xml = self._build_object_geom_xml()
         table_half_height = self.env_config.table_height / 2.0
         object_z = self._rest_height
         task_markers = ""
@@ -1310,6 +1409,7 @@ class ContactAwareGraspLiftEnv(BaseContactAwareEnv):
     <geom solref="0.003 1" solimp="0.95 0.99 0.001" condim="4"/>
     <position kp="400" ctrllimited="true"/>
   </default>
+{object_asset_xml}
   <worldbody>
     <light diffuse="0.8 0.8 0.8" pos="0 0 1.5"/>
     <camera name="overview" pos="0 -0.55 0.38" xyaxes="1 0 0 0 0.6 0.8"/>
@@ -1320,14 +1420,7 @@ class ContactAwareGraspLiftEnv(BaseContactAwareEnv):
 {task_markers}
     <body name="object" pos="0 0 {object_z:.5f}">
       <freejoint name="object_free"/>
-      <geom
-        name="object_geom"
-        type="box"
-        size="{object_half_extents}"
-        mass="{self.env_config.object_mass:.5f}"
-        friction="{object_friction}"
-        rgba="0.2 0.45 0.85 1"
-      />
+{object_geom_xml}
     </body>
     <body name="gripper" pos="0 0 0">
       <inertial pos="0 0 0" mass="0.2" diaginertia="0.001 0.001 0.001"/>
@@ -1484,18 +1577,16 @@ class ArmPinchGraspLiftEnv(BaseContactAwareEnv):
         ]
 
     def _action_size(self) -> int:
+        if self.env_config.arm_control_mode == "ee_delta":
+            return 4
         return 5
 
     def _build_mjcf(self) -> str:
-        object_half_extents = " ".join(
-            f"{value:.5f}" for value in self.env_config.object_half_extents
-        )
-        object_friction = " ".join(
-            f"{value:.5f}" for value in self.env_config.object_friction
-        )
         finger_friction = " ".join(
             f"{value:.5f}" for value in self.env_config.finger_friction
         )
+        object_asset_xml = self._build_object_asset_xml()
+        object_geom_xml = self._build_object_geom_xml()
         table_half_height = self.env_config.table_height / 2.0
         object_z = self._rest_height
         task_markers = ""
@@ -1539,6 +1630,7 @@ class ArmPinchGraspLiftEnv(BaseContactAwareEnv):
     <geom solref="0.003 1" solimp="0.95 0.99 0.001" condim="4"/>
     <position kp="120" ctrllimited="true"/>
   </default>
+{object_asset_xml}
   <worldbody>
     <light diffuse="0.8 0.8 0.8" pos="0 0 1.5"/>
     <camera name="overview" pos="0 -0.55 0.38" xyaxes="1 0 0 0 0.6 0.8"/>
@@ -1549,14 +1641,7 @@ class ArmPinchGraspLiftEnv(BaseContactAwareEnv):
 {task_markers}
     <body name="object" pos="0 0 {object_z:.5f}">
       <freejoint name="object_free"/>
-      <geom
-        name="object_geom"
-        type="box"
-        size="{object_half_extents}"
-        mass="{self.env_config.object_mass:.5f}"
-        friction="{object_friction}"
-        rgba="0.2 0.45 0.85 1"
-      />
+{object_geom_xml}
     </body>
     <body name="arm_base" pos="{self._arm_base_position[0]:.5f} {self._arm_base_position[1]:.5f} {self._arm_base_position[2]:.5f}">
       <inertial pos="0 0 0" mass="1.2" diaginertia="0.005 0.005 0.005"/>
@@ -1603,6 +1688,10 @@ class ArmPinchGraspLiftEnv(BaseContactAwareEnv):
 """
 
     def _set_targets_from_action(self, action: np.ndarray) -> None:
+        if self.env_config.arm_control_mode == "ee_delta":
+            self._set_targets_from_ee_delta_action(action)
+            return
+
         joint_scales = np.asarray(
             self.env_config.arm_joint_delta_scales,
             dtype=np.float64,
@@ -1615,6 +1704,50 @@ class ArmPinchGraspLiftEnv(BaseContactAwareEnv):
                 action[3] * joint_scales[3],
                 action[4] * self.env_config.action_scale_grip,
                 action[4] * self.env_config.action_scale_grip,
+            ],
+            dtype=np.float64,
+        )
+        self._target_ctrl = np.clip(self._target_ctrl + deltas, self._ctrl_low, self._ctrl_high)
+        self.data.ctrl[:] = self._target_ctrl
+
+    def _set_targets_from_ee_delta_action(self, action: np.ndarray) -> None:
+        requested_delta = np.asarray(action[:3], dtype=np.float64) * float(
+            self.env_config.action_scale_xyz
+        )
+        joint_scales = np.asarray(
+            self.env_config.arm_joint_delta_scales,
+            dtype=np.float64,
+        )
+
+        jacp_left = np.zeros((3, self.model.nv), dtype=np.float64)
+        jacr_left = np.zeros((3, self.model.nv), dtype=np.float64)
+        jacp_right = np.zeros((3, self.model.nv), dtype=np.float64)
+        jacr_right = np.zeros((3, self.model.nv), dtype=np.float64)
+        mujoco.mj_jacSite(self.model, self.data, jacp_left, jacr_left, self._left_tip_site_id)
+        mujoco.mj_jacSite(
+            self.model,
+            self.data,
+            jacp_right,
+            jacr_right,
+            self._right_tip_site_id,
+        )
+
+        fingertip_jacobian = 0.5 * (jacp_left + jacp_right)
+        arm_jacobian = fingertip_jacobian[:, self._controlled_qvel_adr[:4]]
+        damping = float(self.env_config.arm_ik_damping)
+        damped_system = (arm_jacobian @ arm_jacobian.T) + damping * np.eye(3)
+        joint_delta = arm_jacobian.T @ np.linalg.solve(damped_system, requested_delta)
+        joint_delta = np.clip(joint_delta, -joint_scales, joint_scales)
+
+        finger_delta = action[3] * self.env_config.action_scale_grip
+        deltas = np.array(
+            [
+                joint_delta[0],
+                joint_delta[1],
+                joint_delta[2],
+                joint_delta[3],
+                finger_delta,
+                finger_delta,
             ],
             dtype=np.float64,
         )

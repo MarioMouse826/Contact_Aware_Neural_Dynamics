@@ -52,13 +52,15 @@ def _config_type_tag(env_config: EnvConfig) -> str:
 
 
 def _build_wandb_tags(config: ExperimentConfig, *, mode: str) -> list[str]:
-    return [
+    tags = [
         mode,
         f"task:{config.env.task}",
         f"config:{_config_type_tag(config.env)}",
         f"seed:{config.train.seed}",
         f"envs:{config.train.num_envs}",
     ]
+    tags.extend(str(tag) for tag in config.logging.wandb_tags)
+    return tags
 
 
 @dataclass
@@ -159,6 +161,9 @@ def _build_training_summary(
     return {
         "mode": mode,
         "embodiment": config.env.embodiment,
+        "object_shape": config.env.object_shape,
+        "object_half_extents": list(config.env.object_half_extents),
+        "object_radius": config.env.object_radius,
         "run_id": run_id,
         "seed": config.train.seed,
         "num_envs": config.train.num_envs,
@@ -223,12 +228,20 @@ def run_training(
         run_config.logging.output_root = output_root
     if wandb_mode is not None:
         run_config.logging.wandb_mode = wandb_mode
-    resolved_init_checkpoint = (
-        str(Path(init_checkpoint).resolve()) if init_checkpoint is not None else None
-    )
+    resolved_init_checkpoint = None
+    if init_checkpoint is not None:
+        init_checkpoint_path = Path(init_checkpoint).expanduser().resolve()
+        if not init_checkpoint_path.exists():
+            raise FileNotFoundError(
+                f"Initial checkpoint does not exist: {init_checkpoint_path}"
+            )
+        resolved_init_checkpoint = str(init_checkpoint_path)
+
+    wandb_config = run_config.to_dict()
+    wandb_config["init_checkpoint_path"] = resolved_init_checkpoint
 
     run = start_wandb_run(
-        config=run_config.to_dict(),
+        config=wandb_config,
         logging_config=run_config.logging,
         job_type="train",
         tags=_build_wandb_tags(run_config, mode=mode),

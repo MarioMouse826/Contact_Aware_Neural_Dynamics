@@ -50,13 +50,13 @@ def save_wandb_files(
         return []
 
     saved: list[str] = []
-    for raw_path in paths:
-        path = Path(raw_path)
+    for path_like in paths:
+        path = Path(path_like)
         if not path.exists():
             continue
         result = wandb.save(str(path), base_path=str(base_path), policy="now")
         if isinstance(result, list):
             saved.extend(result)
         elif result:
-            saved.append(str(result))
+            saved.append(str(path))
     return saved

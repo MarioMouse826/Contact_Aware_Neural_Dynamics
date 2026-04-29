@@ -1,6 +1,6 @@
 # Contact-Aware Neural Dynamics
 
-This repository contains a fresh implementation of the final project experiments for contact-aware reinforcement learning. The code uses custom MuJoCo manipulation environments and compares SAC with and without binary finger contact observations, following the motivation from `Contact-Aware Neural Dynamics.pdf` and the experiment design in `proposal.md`.
+This repository contains a fresh implementation of the final project experiments for contact-aware reinforcement learning. The code uses custom MuJoCo manipulation environments and compares SAC with and without binary finger contact observations, following the motivation from `Contact-Aware Neural Dynamics.pdf`.
 
 The default Cartesian task is now an explicit tabletop pick-and-place objective: start with the cube at point A, grasp it, move it to point B, place it back on the table, release it, and let it settle. The legacy grasp-and-lift task remains available through a separate config.
 
@@ -224,24 +224,6 @@ For the legacy articulated arm lift-only task:
 
 ```bash
 python -m contact_aware_rl.train --config configs/arm_grasp_lift.yaml --mode contact --seed 0 --num-envs 1
-```
-
-## Evaluate
-
-```bash
-python -m contact_aware_rl.evaluate --checkpoint outputs/<run-id>/best_model.zip --mode contact --split validation
-```
-
-For the proposal ablation:
-
-```bash
-python -m contact_aware_rl.evaluate --checkpoint outputs/<run-id>/best_success_model.zip --mode contact_ablation --split validation
-```
-
-## Run The Proposal Suite
-
-```bash
-python -m contact_aware_rl.sweep --suite proposal --seeds 0 1 2 --num-envs 1
 ```
 
 ## Record A Video

@@ -4,6 +4,19 @@ This repository contains a fresh implementation of the final project experiments
 
 The default Cartesian task is now an explicit tabletop pick-and-place objective: start with the cube at point A, grasp it, move it to point B, place it back on the table, release it, and let it settle. The legacy grasp-and-lift task remains available through a separate config.
 
+## Code Organization And Contributions
+
+This repository is organized around one project package, `src/contact_aware_rl`, plus YAML experiment configs in `configs`, runnable experiment scripts in `scripts`, regression tests in `tests`, and reproduction notes in the root `REPRODUCE_*.md` files.
+
+Our contributed code includes:
+
+- custom MuJoCo/Gymnasium manipulation environments for the Cartesian gripper and articulated pinch arm;
+- the contact, no-contact baseline, always-contact, and contact-ablation observation modes;
+- reward shaping, task-status metrics, seeded evaluation splits, checkpoint selection, and W&B logging glue;
+- the SAC training/evaluation entrypoints, sweep scripts, baseline configs, tests, and reproduction documentation.
+
+The external libraries are used as dependencies rather than vendored source code. In particular, Stable-Baselines3 provides the SAC implementation, MuJoCo provides physics/contact simulation, Gymnasium provides the environment API, PyTorch provides the neural-network backend, W&B provides experiment tracking, and NumPy/PyYAML provide numerical/config utilities. Unless a file explicitly says otherwise, code in this repo was written for this project rather than copied from an external code repository.
+
 ## Experiments
 
 - `baseline`: SAC without contact bits in the observation.
@@ -26,6 +39,90 @@ All runs log to Weights and Biases under:
 - `project=contact-aware-neural-dynamics`
 
 The code never assigns a custom W&B run name, so W&B keeps its default random naming.
+
+## Final Experiment Reproduction Commands
+
+The four names below are the final reference W&B display names used in the report. New reruns will reproduce the same config/mode/seed/training protocol, but W&B will assign new run names and IDs because the code intentionally does not set custom W&B names. RL results can still vary slightly by machine and run.
+
+| Role | Reference W&B display name | Mode | Command |
+| --- | --- | --- | --- |
+| Cartesian contact | `dashing-water-66` | `contact` | Final `clean_release` continuation below |
+| Cartesian no-contact | `sandy-sky-123` | `baseline` | Cartesian baseline command below |
+| Arm contact | `fresh-firebrand-75` | `contact` | Arm clean-release sweep command below |
+| Arm no-contact | `ruby-river-125` | `baseline` | Arm baseline chain below |
+
+Cartesian contact, matching `dashing-water-66`:
+
+```bash
+uv run python -m contact_aware_rl.train \
+  --config configs/clean_release.yaml \
+  --mode contact \
+  --seed 0 \
+  --num-envs 12 \
+  --total-timesteps 1000000 \
+  --output-root outputs/clean_release_continue_x2 \
+  --wandb-mode online \
+  --init-checkpoint "<path-to-clean_release-best_model.zip>"
+```
+
+Cartesian no-contact baseline, matching `sandy-sky-123`:
+
+```bash
+uv run python -m contact_aware_rl.train \
+  --config configs/baselines/dashing_water_66_exact_no_plateau.yaml \
+  --mode baseline \
+  --seed 0 \
+  --num-envs 12 \
+  --total-timesteps 1000000 \
+  --output-root outputs/baselines/dashing-water-66/cartesian_exact_no_plateau/seed_0 \
+  --wandb-mode online
+```
+
+Arm contact, matching `fresh-firebrand-75`:
+
+```bash
+uv run python scripts/run_arm_clean_release_sweep.py \
+  --config configs/arm_clean_release_ee.yaml \
+  --init-checkpoint "<path-to-arm-ee-source-best_model.zip>" \
+  --objects box \
+  --max-recipes 1 \
+  --warm-timesteps 400000 \
+  --continue-timesteps 500000 \
+  --wandb-mode online
+```
+
+Arm no-contact baseline chain, matching `ruby-river-125`. The arm baseline must be trained as a baseline checkpoint chain because baseline observations have a different dimension from contact observations:
+
+```bash
+uv run python -m contact_aware_rl.train \
+  --config configs/arm_ee_place_priority.yaml \
+  --mode baseline \
+  --seed 0 \
+  --num-envs 12 \
+  --total-timesteps 1000000 \
+  --output-root outputs/baselines/fresh-firebrand-75/source_exact \
+  --wandb-mode online
+
+uv run python -m contact_aware_rl.train \
+  --config configs/arm_clean_release_ee.yaml \
+  --mode baseline \
+  --seed 0 \
+  --num-envs 12 \
+  --total-timesteps 400000 \
+  --output-root outputs/baselines/fresh-firebrand-75/warm_exact \
+  --wandb-mode online \
+  --init-checkpoint outputs/baselines/fresh-firebrand-75/source_exact/<run-id>/best_model.zip
+
+uv run python -m contact_aware_rl.train \
+  --config configs/arm_clean_release_ee.yaml \
+  --mode baseline \
+  --seed 0 \
+  --num-envs 12 \
+  --total-timesteps 500000 \
+  --output-root outputs/baselines/fresh-firebrand-75/continue_exact \
+  --wandb-mode online \
+  --init-checkpoint outputs/baselines/fresh-firebrand-75/warm_exact/<run-id>/best_model.zip
+```
 
 ## Setup
 

@@ -1,9 +1,0 @@
-{
-  "embodiment": "cartesian_gripper",
-  "mode": "contact",
-  "num_envs": 12,
-  "run_id": "3hq3kpce",
-  "seed": 0,
-  "wandb_entity": "contact-aware-rl",
-  "wandb_project": "contact-aware-neural-dynamics"
-}

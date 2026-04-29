@@ -213,6 +213,8 @@ def run_training(
     wandb_mode: str | None = None,
     init_checkpoint: str | Path | None = None,
 ) -> TrainingArtifacts:
+    """Run one SAC training job and write config, metrics, models, and summaries."""
+
     resolved_mode = resolve_mode(mode)
     if not resolved_mode.trainable:
         raise ValueError(f"Mode '{mode}' is evaluation-only and cannot be trained.")

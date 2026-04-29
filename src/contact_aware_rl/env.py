@@ -205,6 +205,8 @@ def validate_env_config(env_config: EnvConfig) -> None:
 
 
 class BaseContactAwareEnv(gym.Env[np.ndarray, np.ndarray]):
+    """Shared MuJoCo task logic for contact-aware gripper and arm environments."""
+
     metadata = {"render_modes": []}
 
     def __init__(

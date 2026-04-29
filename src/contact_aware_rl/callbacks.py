@@ -9,6 +9,8 @@ from .evaluation import EvaluationSummary, evaluate_policy, save_json
 
 
 class PeriodicEvalCallback(BaseCallback):
+    """Evaluate monitor/validation splits and manage best/latest checkpoints."""
+
     def __init__(
         self,
         *,

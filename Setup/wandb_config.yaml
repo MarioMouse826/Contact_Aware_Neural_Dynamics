@@ -1,0 +1,9 @@
+project: contact-aware-neural-dynamics
+entity: contact-aware-rl
+device: auto
+group: humanoid-lift
+tags:
+  - humanoid
+  - sac
+  - contact-aware
+  - unitree-g1

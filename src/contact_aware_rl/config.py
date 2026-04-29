@@ -54,6 +54,8 @@ class EnvConfig:
     object_half_extents: list[float] = field(
         default_factory=lambda: [0.025, 0.025, 0.03]
     )
+    object_shape: str = "box"
+    object_radius: float | None = None
     object_mass: float = 0.03
     object_friction: list[float] = field(default_factory=lambda: [1.2, 0.05, 0.01])
     finger_friction: list[float] = field(default_factory=lambda: [1.8, 0.08, 0.015])

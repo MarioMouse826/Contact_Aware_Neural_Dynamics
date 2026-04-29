@@ -161,6 +161,9 @@ def _build_training_summary(
     return {
         "mode": mode,
         "embodiment": config.env.embodiment,
+        "object_shape": config.env.object_shape,
+        "object_half_extents": list(config.env.object_half_extents),
+        "object_radius": config.env.object_radius,
         "run_id": run_id,
         "seed": config.train.seed,
         "num_envs": config.train.num_envs,

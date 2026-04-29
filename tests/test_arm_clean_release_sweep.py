@@ -66,15 +66,56 @@ def test_apply_recipe_adds_wandb_sweep_tags(tmp_path: Path) -> None:
     updated = sweep._apply_recipe(
         config,
         sweep.SweepRecipe("formula_nominal"),
+        object_variant=sweep.DEFAULT_OBJECT_VARIANTS["sphere"],
         stage="warm",
         output_root=tmp_path / "run",
     )
 
     assert "arm-clean-release-sweep" in updated.logging.wandb_tags
     assert "source:iconic-haze-72" in updated.logging.wandb_tags
+    assert "object:sphere" in updated.logging.wandb_tags
+    assert "shape:sphere" in updated.logging.wandb_tags
     assert "recipe:formula_nominal" in updated.logging.wandb_tags
     assert "stage:warm" in updated.logging.wandb_tags
     assert "control:ee_delta" in updated.logging.wandb_tags
+    assert updated.env.object_shape == "sphere"
+    assert updated.env.object_radius == 0.030
+
+
+def test_resolve_object_variants_accepts_comma_list_and_hyphens() -> None:
+    sweep = load_sweep_module()
+
+    variants = sweep._resolve_object_variants("sphere,rectangular-block,cylinder")
+
+    assert [variant.name for variant in variants] == [
+        "sphere",
+        "rectangular_block",
+        "cylinder",
+    ]
+
+
+def test_result_row_records_object_geometry() -> None:
+    sweep = load_sweep_module()
+
+    row = sweep._result_row(
+        object_variant=sweep.DEFAULT_OBJECT_VARIANTS["triangular_prism"],
+        recipe=sweep.SweepRecipe("formula_nominal"),
+        stage="warm",
+        init_checkpoint="/tmp/init.zip",
+        training_summary={
+            "object_shape": "triangular_prism",
+            "object_half_extents": [0.029, 0.029, 0.030],
+            "object_radius": 0.029,
+            "best_validation_metrics": {"success_rate": 0.2},
+        },
+        training_summary_path=Path("/tmp/summary.json"),
+        target_met=True,
+    )
+
+    assert row["object"] == "triangular_prism"
+    assert row["object_shape"] == "triangular_prism"
+    assert row["object_radius"] == 0.029
+    assert row["best_success_rate"] == 0.2
 
 
 def test_run_stage_passes_init_checkpoint_to_training(
@@ -103,6 +144,7 @@ def test_run_stage_passes_init_checkpoint_to_training(
 
     sweep._run_stage(
         base_config=config,
+        object_variant=sweep.DEFAULT_OBJECT_VARIANTS["cylinder"],
         recipe=sweep.SweepRecipe("formula_nominal", seed=7),
         stage="warm",
         init_checkpoint="/tmp/iconic-haze-72.zip",
@@ -115,3 +157,5 @@ def test_run_stage_passes_init_checkpoint_to_training(
     assert captured["kwargs"]["num_envs"] == 2
     assert captured["kwargs"]["total_timesteps"] == 1234
     assert captured["kwargs"]["wandb_mode"] == "disabled"
+    assert captured["config"].env.object_shape == "cylinder"
+    assert captured["config"].logging.output_root.endswith("runs/cylinder/formula_nominal/warm")

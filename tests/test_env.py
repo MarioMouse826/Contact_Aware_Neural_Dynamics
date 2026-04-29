@@ -98,6 +98,34 @@ def _pick_place_noop(env: ContactAwareGraspLiftEnv | ArmPinchGraspLiftEnv) -> np
     return np.zeros(env.action_space.shape[0], dtype=np.float32)
 
 
+OBJECT_SHAPE_CASES = [
+    ("sphere", {"object_shape": "sphere", "object_radius": 0.030}),
+    (
+        "rectangular_block",
+        {
+            "object_shape": "box",
+            "object_half_extents": [0.035, 0.020, 0.030],
+        },
+    ),
+    (
+        "cylinder",
+        {
+            "object_shape": "cylinder",
+            "object_radius": 0.025,
+            "object_half_extents": [0.025, 0.025, 0.030],
+        },
+    ),
+    (
+        "triangular_prism",
+        {
+            "object_shape": "triangular_prism",
+            "object_radius": 0.029,
+            "object_half_extents": [0.029, 0.029, 0.030],
+        },
+    ),
+]
+
+
 def _prime_pick_place_transport(env: ContactAwareGraspLiftEnv) -> None:
     noop = _pick_place_noop(env)
     lift_height = PICK_PLACE_START_POS[2] + 0.06
@@ -272,6 +300,47 @@ def test_arm_pick_place_reset_uses_explicit_start_goal_and_home_pose() -> None:
     assert observation.shape == (36,)
     assert np.allclose(observation[-8:-5], np.array(PICK_PLACE_GOAL_POS, dtype=np.float32))
     assert info["task"] == "pick_place_ab"
+    env.close()
+
+
+def test_default_object_shape_is_original_box() -> None:
+    config = EnvConfig()
+    assert config.object_shape == "box"
+    assert config.object_radius is None
+    assert config.object_half_extents == [0.025, 0.025, 0.03]
+
+
+@pytest.mark.parametrize(("object_name", "shape_overrides"), OBJECT_SHAPE_CASES)
+@pytest.mark.parametrize(
+    ("embodiment", "expected_obs_dim", "expected_action_dim"),
+    [
+        ("cartesian_gripper", 34, 4),
+        ("arm_pinch", 36, 5),
+    ],
+)
+def test_pick_place_supported_object_shapes_compile_and_reset(
+    object_name: str,
+    shape_overrides: dict[str, object],
+    embodiment: str,
+    expected_obs_dim: int,
+    expected_action_dim: int,
+) -> None:
+    del object_name
+    config = EnvConfig(
+        embodiment=embodiment,
+        task="pick_place_ab",
+        observation_mode="contact",
+        max_episode_steps=5,
+        **shape_overrides,
+    )
+    env = make_env(config, RewardConfig())
+    observation, info = env.reset(seed=0)
+    object_pos, _ = env._get_object_state()
+
+    assert observation.shape == (expected_obs_dim,)
+    assert env.action_space.shape == (expected_action_dim,)
+    assert object_pos[2] == pytest.approx(0.08)
+    assert info["object_height"] == pytest.approx(0.03)
     env.close()
 
 
